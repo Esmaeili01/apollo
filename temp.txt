@@ -1,0 +1,3 @@
+password = thisistheend1234
+url = https://ntlftadhcescxldsaytg.supabase.co
+api = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im50bGZ0YWRoY2VzY3hsZHNheXRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDkzMjQzMDMsImV4cCI6MjA2NDkwMDMwM30.ILmzaa8bUBx3IK1UkKh2Fd8x4wOjusxVvX2xVMIm6s8
