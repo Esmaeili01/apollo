@@ -1,6 +1,6 @@
 # apollo
 
-A new Flutter project.
+A Messenger with Flutter
 
 ## Getting Started
 
