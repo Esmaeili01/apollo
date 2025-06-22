@@ -235,23 +235,36 @@ class _EditProfilePageState extends State<EditProfilePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                'Edit Profile',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF6D5BFF),
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 16),
-              GestureDetector(
-                onTap: isLoading ? null : _pickAvatar,
-                child: CircleAvatar(
-                  radius: 40,
-                  backgroundColor: const Color(0xFF46C2CB),
-                  backgroundImage: avatarImage,
-                  child: avatarChild,
+              // Avatar row with trash icon
+              Center(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    GestureDetector(
+                      onTap: isLoading ? null : _pickAvatar,
+                      child: CircleAvatar(
+                        radius: 40,
+                        backgroundColor: const Color(0xFF46C2CB),
+                        backgroundImage: avatarImage,
+                        child: avatarChild,
+                      ),
+                    ),
+                    if (avatarImage != null)
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        tooltip: 'Remove avatar',
+                        onPressed:
+                            isLoading
+                                ? null
+                                : () {
+                                  setState(() {
+                                    avatarFile = null;
+                                    avatarBytes = null;
+                                    avatarUrl = null;
+                                  });
+                                },
+                      ),
+                  ],
                 ),
               ),
               const SizedBox(height: 16),

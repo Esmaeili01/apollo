@@ -14,7 +14,11 @@ class UserProfilePage extends StatelessWidget {
     if (diff.inMinutes < 1) return 'just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
     if (diff.inHours < 24) return '${diff.inHours} hr ago';
-    return DateFormat('yyyy-MM-dd HH:mm').format(dt);
+    if (diff.inDays < 2) {
+      return 'yesterday at ${DateFormat('HH:mm').format(dt)}';
+    } else {
+      return '${diff.inDays} days ago at ${DateFormat('dd MMM, HH:mm').format(dt)}';
+    }
   }
 
   @override
@@ -73,28 +77,53 @@ class UserProfilePage extends StatelessWidget {
                           Center(
                             child: Column(
                               children: [
-                                CircleAvatar(
-                                  radius: 48,
-                                  backgroundColor: const Color(0xFF46C2CB),
-                                  backgroundImage:
+                                GestureDetector(
+                                  onTap:
                                       avatarUrl != null && avatarUrl.isNotEmpty
-                                          ? NetworkImage(avatarUrl)
+                                          ? () {
+                                            Navigator.of(context).push(
+                                              PageRouteBuilder(
+                                                opaque: false,
+                                                barrierColor: Colors.black,
+                                                pageBuilder: (context, _, __) {
+                                                  return _AvatarFullScreen(
+                                                    avatarUrl: avatarUrl,
+                                                    tag:
+                                                        'profile_avatar_$avatarUrl',
+                                                  );
+                                                },
+                                              ),
+                                            );
+                                          }
                                           : null,
-                                  child:
-                                      (avatarUrl == null || avatarUrl.isEmpty)
-                                          ? Text(
-                                            name.isNotEmpty
-                                                ? name
-                                                    .substring(0, 1)
-                                                    .toUpperCase()
-                                                : '?',
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 32,
-                                            ),
-                                          )
-                                          : null,
+                                  child: Hero(
+                                    tag: 'profile_avatar_$avatarUrl',
+                                    child: CircleAvatar(
+                                      radius: 48,
+                                      backgroundColor: const Color(0xFF46C2CB),
+                                      backgroundImage:
+                                          avatarUrl != null &&
+                                                  avatarUrl.isNotEmpty
+                                              ? NetworkImage(avatarUrl)
+                                              : null,
+                                      child:
+                                          (avatarUrl == null ||
+                                                  avatarUrl.isEmpty)
+                                              ? Text(
+                                                name.isNotEmpty
+                                                    ? name
+                                                        .substring(0, 1)
+                                                        .toUpperCase()
+                                                    : '?',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 32,
+                                                ),
+                                              )
+                                              : null,
+                                    ),
+                                  ),
                                 ),
                                 const SizedBox(height: 16),
                                 Text(
@@ -258,6 +287,92 @@ class UserProfilePage extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _AvatarFullScreen extends StatelessWidget {
+  final String avatarUrl;
+  final String tag;
+  const _AvatarFullScreen({required this.avatarUrl, required this.tag});
+
+  @override
+  Widget build(BuildContext context) {
+    // Get the user's name from the previous route's arguments if available
+    final ModalRoute? parentRoute = ModalRoute.of(context);
+    String? userName;
+    if (parentRoute != null && parentRoute.settings.arguments is Map) {
+      final args = parentRoute.settings.arguments as Map;
+      userName = args['name'] as String?;
+    }
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          Center(
+            child: Hero(
+              tag: tag,
+              child: InteractiveViewer(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Image.network(avatarUrl, fit: BoxFit.contain),
+                ),
+              ),
+            ),
+          ),
+          // AppBar overlay
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              child: Container(
+                height: 56,
+                // ignore: deprecated_member_use
+                color: Colors.black.withOpacity(0.1),
+                child: Stack(
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: IconButton(
+                        icon: const Icon(
+                          Icons.arrow_back,
+                          color: Colors.white,
+                          size: 28,
+                        ),
+                        onPressed: () => Navigator.of(context).pop(),
+                        tooltip: 'Back',
+                      ),
+                    ),
+                    Center(
+                      child: Text(
+                        userName ?? '',
+                        style: const TextStyle(
+                          color: Colors.white, // Ensure the name is white
+                          fontWeight: FontWeight.bold,
+                          fontSize: 20,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: IconButton(
+                        icon: const Icon(Icons.download, color: Colors.white),
+                        tooltip: 'Download',
+                        onPressed: () {
+                          // Download logic here
+                          // You can use a package like 'image_downloader' or 'gallery_saver' for actual download
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -240,7 +240,7 @@ class _PrivateChatPageState extends State<PrivateChatPage> {
     if (diff.inHours < 48 && now.day - dt.day == 1) {
       return 'last seen yesterday at ${DateFormat('HH:mm').format(dt)}';
     }
-    return 'last seen on ${DateFormat('MMM dd, yyyy at HH:mm').format(dt)}';
+    return 'last seen on ${DateFormat('MMM dd, yyyy').format(dt)} at ${DateFormat('HH:mm').format(dt)}';
   }
 
   void _showContactInfo() {
