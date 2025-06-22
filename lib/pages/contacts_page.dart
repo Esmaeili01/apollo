@@ -33,7 +33,7 @@ class _ContactsPageState extends State<ContactsPage> {
           .from('contacts')
           .select()
           .eq('user_id', user.id);
-
+      
       final contacts = List<Map<String, dynamic>>.from(res as List);
 
       List<Map<String, dynamic>> contactsWithProfiles = [];
