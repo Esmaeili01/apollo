@@ -365,7 +365,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                     Icons.info_outline,
                     color: Color(0xFF6D5BFF),
                   ),
-                  hintText: 'Bio (max 100 chars)',
+                  hintText: 'Bio (optional , 100 characters)',
                   filled: true,
                   fillColor: Colors.grey[100],
                   contentPadding: const EdgeInsets.symmetric(
