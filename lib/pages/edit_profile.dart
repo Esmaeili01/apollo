@@ -6,25 +6,21 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'dart:io' as io;
 
-class EditProfilePage extends StatefulWidget {
-  final Map<String, dynamic> profile;
-  final VoidCallback onUpdated;
-  const EditProfilePage({
-    required this.profile,
-    required this.onUpdated,
-    Key? key,
-  }) : super(key: key);
+class EditProfile extends StatefulWidget {
+  final Map<String, dynamic>? profile;
+  final VoidCallback? onUpdated;
+  const EditProfile({this.profile, this.onUpdated, Key? key}) : super(key: key);
 
   @override
-  State<EditProfilePage> createState() => _EditProfilePageState();
+  State<EditProfile> createState() => _EditProfileState();
 }
 
-class _EditProfilePageState extends State<EditProfilePage> {
+class _EditProfileState extends State<EditProfile> {
   late TextEditingController usernameController;
   late TextEditingController nameController;
   late TextEditingController bioController;
-  DateTime? birthday;
   String? avatarUrl;
+  DateTime? birthday;
   XFile? avatarFile;
   Uint8List? avatarBytes;
   final _formKey = GlobalKey<FormState>();
@@ -34,15 +30,15 @@ class _EditProfilePageState extends State<EditProfilePage> {
   void initState() {
     super.initState();
     usernameController = TextEditingController(
-      text: widget.profile['username'] ?? '',
+      text: widget.profile?['username'] ?? '',
     );
-    nameController = TextEditingController(text: widget.profile['name'] ?? '');
-    bioController = TextEditingController(text: widget.profile['bio'] ?? '');
-    avatarUrl = widget.profile['avatar_url'];
+    nameController = TextEditingController(text: widget.profile?['name'] ?? '');
+    bioController = TextEditingController(text: widget.profile?['bio'] ?? '');
+    avatarUrl = widget.profile?['avatar_url'];
+    final bday = widget.profile?['birthday'];
     birthday =
-        widget.profile['birthday'] != null &&
-                widget.profile['birthday'].toString().isNotEmpty
-            ? DateTime.tryParse(widget.profile['birthday'])
+        (bday != null && bday.toString().isNotEmpty)
+            ? DateTime.tryParse(bday)
             : null;
   }
 
@@ -160,7 +156,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
             'bio': bioController.text.trim(),
           })
           .eq('id', user.id);
-      widget.onUpdated();
+      if (widget.onUpdated != null) widget.onUpdated!();
       Navigator.of(context).pop();
     } catch (e) {
       _showError('Failed to save profile: $e');

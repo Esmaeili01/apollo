@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'settings.dart';
-import 'search_page.dart';
-import 'contacts_page.dart';
-import 'private_chat_page.dart';
+import 'search.dart';
+import 'contacts.dart';
+import 'private_chat.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'group_create.dart';
+import 'edit_profile.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -135,13 +137,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _closeDial();
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => const ContactsPage()),
+      MaterialPageRoute(builder: (context) => const Contacts()),
     );
   }
 
   void _onNewGroup() {
     _closeDial();
-    // TODO: Implement new group
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const GroupCreate()),
+    );
   }
 
   void _toggleMenu() {
@@ -173,7 +178,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     if (value == 'contacts') {
       Navigator.push(
         context,
-        MaterialPageRoute(builder: (context) => const ContactsPage()),
+        MaterialPageRoute(builder: (context) => const Contacts()),
       );
     }
     if (value == 'blocks') {
@@ -326,7 +331,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                           context,
                                           MaterialPageRoute(
                                             builder:
-                                                (context) => PrivateChatPage(
+                                                (context) => PrivateChat(
                                                   contact: contact,
                                                 ),
                                           ),
@@ -426,8 +431,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                           heroTag: 'group',
                           mini: true,
                           onPressed: () {
-                            _closeDial();
-                            // TODO: Implement new group
+                            _onNewGroup();
                           },
                           backgroundColor: Colors.transparent,
                           elevation: 0,

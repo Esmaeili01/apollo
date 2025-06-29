@@ -4,15 +4,16 @@ import 'package:intl/intl.dart';
 import 'dart:async';
 import 'user_profile.dart';
 
-class PrivateChatPage extends StatefulWidget {
+class PrivateChat extends StatefulWidget {
+  const PrivateChat({required this.contact, super.key});
+
   final Map<String, dynamic> contact;
-  const PrivateChatPage({required this.contact, super.key});
 
   @override
-  State<PrivateChatPage> createState() => _PrivateChatPageState();
+  State<PrivateChat> createState() => _PrivateChatState();
 }
 
-class _PrivateChatPageState extends State<PrivateChatPage> {
+class _PrivateChatState extends State<PrivateChat> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   List<Map<String, dynamic>> _messages = [];

@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'private_chat_page.dart';
+import 'private_chat.dart';
 
-class ContactsPage extends StatefulWidget {
-  const ContactsPage({super.key});
+class Contacts extends StatefulWidget {
+  const Contacts({super.key});
 
   @override
-  State<ContactsPage> createState() => _ContactsPageState();
+  State<Contacts> createState() => _ContactsState();
 }
 
-class _ContactsPageState extends State<ContactsPage> {
+class _ContactsState extends State<Contacts> {
   final TextEditingController _usernameController = TextEditingController();
   bool _isLoading = false;
   String? _error;
@@ -33,7 +33,7 @@ class _ContactsPageState extends State<ContactsPage> {
           .from('contacts')
           .select()
           .eq('user_id', user.id);
-      
+
       final contacts = List<Map<String, dynamic>>.from(res as List);
 
       List<Map<String, dynamic>> contactsWithProfiles = [];
@@ -197,8 +197,7 @@ class _ContactsPageState extends State<ContactsPage> {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder:
-                                      (context) => PrivateChatPage(contact: c),
+                                  builder: (context) => PrivateChat(contact: c),
                                 ),
                               );
                             },

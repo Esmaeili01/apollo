@@ -5,7 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'dart:io' as io;
-import 'edit_profile_page.dart';
+import 'edit_profile.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -25,7 +25,7 @@ class _SettingsPage extends State<SettingsPage> {
       context,
       MaterialPageRoute(
         builder:
-            (context) => EditProfilePage(
+            (context) => EditProfile(
               profile: profile,
               onUpdated: () {
                 setState(() {}); // Refresh profile after editing
