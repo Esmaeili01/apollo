@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'group_profile.dart';
 
 class GroupChatPage extends StatefulWidget {
@@ -15,50 +16,214 @@ class _GroupChatPageState extends State<GroupChatPage> {
   List<Map<String, dynamic>> _messages = [];
   bool _isLoading = true;
   List<Map<String, dynamic>> _members = [];
+  Map<String, dynamic> _groupInfo = {};
+  String? _groupId;
 
   @override
   void initState() {
     super.initState();
-    // TODO: Fetch group messages and members
     _fetchGroupData();
   }
 
   Future<void> _fetchGroupData() async {
-    // TODO: Replace with real fetch logic
-    setState(() {
-      _isLoading = false;
-      _members = widget.group['members'] ?? [];
-      _messages = [
-        // Example messages
-        {
-          'id': '1',
-          'sender': {'name': 'Alice', 'avatar_url': ''},
-          'content': 'Hello group!',
-          'created_at': DateTime.now().toIso8601String(),
-        },
-        {
-          'id': '2',
-          'sender': {'name': 'Bob', 'avatar_url': ''},
-          'content': 'Hi Alice!',
-          'created_at': DateTime.now().toIso8601String(),
-        },
-      ];
+    try {
+      setState(() {
+        _isLoading = true;
+      });
+
+      // Get current user
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) {
+        throw Exception('User not authenticated');
+      }
+
+      // If group has an ID, fetch from database, otherwise use the passed data
+      if (widget.group['id'] != null) {
+        _groupId = widget.group['id'];
+        await _fetchExistingGroup();
+      } else {
+        // This is a newly created group, create it in database
+        await _createNewGroup();
+      }
+
+      // Fetch members and messages
+      await Future.wait([_fetchMembers(), _fetchMessages()]);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error loading group: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _createNewGroup() async {
+    final user = Supabase.instance.client.auth.currentUser!;
+
+    // Create the group
+    final groupResponse =
+        await Supabase.instance.client
+            .from('groups')
+            .insert({
+              'name': widget.group['name'],
+              'bio': widget.group['bio'],
+              'is_public': widget.group['is_public'],
+              'invite_link': widget.group['invite_link'],
+              'avatar_url': widget.group['avatar_url'],
+              'creator_id': user.id,
+              'can_send_message': true,
+              'can_send_media': true,
+              'can_add_members': true,
+              'can_pin_message': true,
+              'can_change_info': true,
+              'can_delete_message': false,
+            })
+            .select()
+            .single();
+
+    _groupId = groupResponse['id'];
+    _groupInfo = groupResponse;
+
+    // Add creator as first member
+    await Supabase.instance.client.from('group_members').insert({
+      'group_id': _groupId,
+      'user_id': user.id,
+      'role': 2, // 2 = owner
+      'joined_at': DateTime.now().toIso8601String(),
     });
+  }
+
+  Future<void> _fetchExistingGroup() async {
+    final response =
+        await Supabase.instance.client
+            .from('groups')
+            .select()
+            .eq('id', _groupId)
+            .single();
+
+    _groupInfo = response;
+  }
+
+  Future<void> _fetchMembers() async {
+    try {
+      final response = await Supabase.instance.client
+          .from('group_members')
+          .select('''
+            user_id,
+            role,
+            joined_at,
+            profiles!inner(
+              id,
+              name,
+              username,
+              avatar_url,
+              bio
+            )
+          ''')
+          .eq('group_id', _groupId);
+
+      setState(() {
+        _members =
+            (response as List).map((member) {
+              final profile = member['profiles'] as Map<String, dynamic>;
+              final role = member['role'] as int? ?? 0;
+
+              String roleText = '';
+              switch (role) {
+                case 0:
+                  roleText = 'Member';
+                  break;
+                case 1:
+                  roleText = 'Admin';
+                  break;
+                case 2:
+                  roleText = 'Owner';
+                  break;
+              }
+
+              return {
+                'user_id': member['user_id'],
+                'role': role,
+                'role_text': roleText,
+                'joined_at': member['joined_at'],
+                'name': profile['name'] ?? profile['username'] ?? 'Unknown',
+                'username': profile['username'],
+                'avatar_url': profile['avatar_url'],
+                'bio': profile['bio'],
+              };
+            }).toList();
+      });
+    } catch (e) {
+      print('Error fetching members: $e');
+      setState(() {
+        _members = [];
+      });
+    }
+  }
+
+  Future<void> _fetchMessages() async {
+    try {
+      final response = await Supabase.instance.client
+          .from('group_messages')
+          .select('''
+            id,
+            content,
+            created_at,
+            profiles!inner(
+              id,
+              name,
+              username,
+              avatar_url
+            )
+          ''')
+          .eq('group_id', _groupId)
+          .order('created_at', ascending: true);
+
+      setState(() {
+        _messages =
+            (response as List).map((message) {
+              final profile = message['profiles'] as Map<String, dynamic>;
+              return {
+                'id': message['id'],
+                'content': message['content'],
+                'created_at': message['created_at'],
+                'sender': {
+                  'id': profile['id'],
+                  'name': profile['name'] ?? profile['username'] ?? 'Unknown',
+                  'username': profile['username'],
+                  'avatar_url': profile['avatar_url'],
+                },
+              };
+            }).toList();
+      });
+    } catch (e) {
+      print('Error fetching messages: $e');
+      setState(() {
+        _messages = [];
+      });
+    }
   }
 
   void _showGroupProfile() {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => GroupProfilePage(group: widget.group),
+        builder: (context) => GroupProfilePage(group: _groupInfo),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final groupName = widget.group['name'] ?? 'Group';
+    final groupName = _groupInfo['name'] ?? widget.group['name'] ?? 'Group';
     final memberCount = _members.length;
+    final groupAvatarUrl = _groupInfo['avatar_url'];
+
     return Scaffold(
       appBar: AppBar(
         flexibleSpace: Container(
@@ -75,7 +240,22 @@ class _GroupChatPageState extends State<GroupChatPage> {
           onTap: _showGroupProfile,
           child: Row(
             children: [
-              const Icon(Icons.groups, color: Colors.white),
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: const Color(0xFF46C2CB),
+                backgroundImage:
+                    groupAvatarUrl != null && groupAvatarUrl.isNotEmpty
+                        ? NetworkImage(groupAvatarUrl)
+                        : null,
+                child:
+                    (groupAvatarUrl == null || groupAvatarUrl.isEmpty)
+                        ? const Icon(
+                          Icons.groups,
+                          color: Colors.white,
+                          size: 20,
+                        )
+                        : null,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -203,9 +383,9 @@ class _GroupChatPageState extends State<GroupChatPage> {
                                         alignment: Alignment.bottomRight,
                                         child: Text(
                                           msg['created_at'] != null
-                                              ? msg['created_at']
-                                                  .toString()
-                                                  .substring(11, 16)
+                                              ? DateTime.parse(
+                                                msg['created_at'],
+                                              ).toString().substring(11, 16)
                                               : '',
                                           style: const TextStyle(
                                             color: Colors.black38,

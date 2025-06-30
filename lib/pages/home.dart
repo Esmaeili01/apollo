@@ -6,6 +6,7 @@ import 'private_chat.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'group_create.dart';
 import 'edit_profile.dart';
+import 'group_chat.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -27,7 +28,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   int _selectedChatTab = 0; // 0: PV, 1: Group
 
   List<Map<String, dynamic>> _privateChats = [];
+  List<Map<String, dynamic>> _groups = [];
   bool _loadingChats = false;
+  bool _loadingGroups = false;
   Map<String, dynamic>? _userProfile;
 
   @override
@@ -56,6 +59,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
 
     _fetchPrivateChats();
+    _fetchGroups();
     _fetchUserProfile();
   }
 
@@ -117,6 +121,67 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       _privateChats = chatMap.values.toList();
       _loadingChats = false;
     });
+  }
+
+  Future<void> _fetchGroups() async {
+    setState(() => _loadingGroups = true);
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      print('Fetching groups for user: ${user.id}');
+
+      // Get all groups where the user is a member
+      final res = await Supabase.instance.client
+          .from('group_members')
+          .select('''
+            group_id,
+            role,
+            joined_at,
+            groups!inner(
+              id,
+              name,
+              bio,
+              avatar_url,
+              is_public,
+              invite_link,
+              created_at,
+              creator_id
+            )
+          ''')
+          .eq('user_id', user.id)
+          .order('joined_at', ascending: false);
+
+      print('Groups query result: $res');
+      print('Result type: ${res.runtimeType}');
+      print('Result length: ${res.length}');
+
+      setState(() {
+        _groups =
+            (res as List).map((member) {
+              print('Processing member: $member');
+              final group = member['groups'] as Map<String, dynamic>;
+              return {
+                'id': group['id'],
+                'name': group['name'],
+                'bio': group['bio'],
+                'avatar_url': group['avatar_url'],
+                'is_public': group['is_public'],
+                'invite_link': group['invite_link'],
+                'created_at': group['created_at'],
+                'creator_id': group['creator_id'],
+                'role': member['role'],
+                'joined_at': member['joined_at'],
+              };
+            }).toList();
+        _loadingGroups = false;
+      });
+
+      print('Final groups list: $_groups');
+    } catch (e) {
+      print('Error fetching groups: $e');
+      setState(() => _loadingGroups = false);
+    }
   }
 
   Future<void> _fetchUserProfile() async {
@@ -340,14 +405,135 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                     );
                                   },
                                 )
-                            : const Center(
-                              child: Text(
-                                'Group Chats List',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  color: Colors.black54,
-                                ),
-                              ),
+                            : _loadingGroups
+                            ? const Center(child: CircularProgressIndicator())
+                            : _groups.isEmpty
+                            ? const Center(child: Text('No groups yet.'))
+                            : ListView.separated(
+                              itemCount: _groups.length,
+                              separatorBuilder: (_, __) => const Divider(),
+                              itemBuilder: (context, i) {
+                                final group = _groups[i];
+                                final avatarUrl =
+                                    group['avatar_url'] as String?;
+                                final name = group['name'] as String? ?? '';
+                                final bio = group['bio'] as String? ?? '';
+                                final isPublic =
+                                    group['is_public'] as bool? ?? false;
+                                final role = group['role'] as int? ?? 0;
+
+                                String roleText = '';
+                                Color roleColor = Colors.grey;
+
+                                switch (role) {
+                                  case 0:
+                                    roleText = 'Member';
+                                    roleColor = Colors.grey;
+                                    break;
+                                  case 1:
+                                    roleText = 'Admin';
+                                    roleColor = const Color(0xFF6D5BFF);
+                                    break;
+                                  case 2:
+                                    roleText = 'Owner';
+                                    roleColor = Colors.orange;
+                                    break;
+                                }
+
+                                return ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: const Color(0xFF46C2CB),
+                                    backgroundImage:
+                                        avatarUrl != null &&
+                                                avatarUrl.isNotEmpty
+                                            ? NetworkImage(avatarUrl)
+                                            : null,
+                                    child:
+                                        (avatarUrl == null || avatarUrl.isEmpty)
+                                            ? const Icon(
+                                              Icons.groups,
+                                              color: Colors.white,
+                                              size: 24,
+                                            )
+                                            : null,
+                                  ),
+                                  title: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          name,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                      if (role > 0)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 6,
+                                            vertical: 2,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: roleColor,
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            roleText,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                  subtitle: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      if (bio.isNotEmpty)
+                                        Text(
+                                          bio,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 13),
+                                        ),
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            isPublic
+                                                ? Icons.public
+                                                : Icons.lock,
+                                            size: 12,
+                                            color: Colors.grey[600],
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            isPublic ? 'Public' : 'Private',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey[600],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder:
+                                            (context) =>
+                                                GroupChatPage(group: group),
+                                      ),
+                                    ).then((_) => _fetchGroups());
+                                  },
+                                );
+                              },
                             ),
                   ),
                 ),
