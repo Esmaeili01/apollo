@@ -48,7 +48,6 @@ dependencies:
   # Audio recording and playback
   flutter_sound: ^9.2.13
   just_audio: ^0.9.36
-
   # Emoji and stickers
   emoji_picker_flutter: ^1.6.1
 
@@ -66,6 +65,7 @@ dependencies:
 
   # For showing toast/snackbar messages
   another_flushbar: ^1.12.30
+  audioplayers: ^6.5.0
 
 dev_dependencies:
   flutter_test:
