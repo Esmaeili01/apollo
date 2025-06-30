@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:another_flushbar/flushbar.dart';
 import 'signup.dart';
+import '../utils/online_status_manager.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -53,6 +54,7 @@ class _LoginPageState extends State<LoginPage> {
       final user = response.user;
       if (user != null) {
         if (!mounted) return;
+        OnlineStatusManager().start();
         Navigator.pushReplacementNamed(context, '/home');
       } else {
         _showError('Login failed. Please try again.');
@@ -180,56 +182,57 @@ class _LoginPageState extends State<LoginPage> {
                           height: 50,
                           child: ElevatedButton(
                             onPressed: isLoading ? null : _signIn,
-                            style:
-                                ElevatedButton.styleFrom(
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
+                            style: ElevatedButton.styleFrom(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              padding: EdgeInsets.zero,
+                              elevation: 4,
+                              backgroundColor: Colors.transparent,
+                              shadowColor: Colors.black26,
+                            ).copyWith(
+                              backgroundColor:
+                                  WidgetStateProperty.resolveWith<Color?>(
+                                    (states) => null,
                                   ),
-                                  padding: EdgeInsets.zero,
-                                  elevation: 4,
-                                  backgroundColor: Colors.transparent,
-                                  shadowColor: Colors.black26,
-                                ).copyWith(
-                                  backgroundColor:
-                                      WidgetStateProperty.resolveWith<Color?>(
-                                        (states) => null,
+                            ),
+                            child:
+                                isLoading
+                                    ? const SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                              Colors.white,
+                                            ),
+                                        strokeWidth: 2.5,
                                       ),
-                                ),
-                            child: isLoading
-                                ? const SizedBox(
-                                    width: 24,
-                                    height: 24,
-                                    child: CircularProgressIndicator(
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        Colors.white,
+                                    )
+                                    : Ink(
+                                      decoration: BoxDecoration(
+                                        gradient: const LinearGradient(
+                                          colors: [
+                                            Color(0xFF6D5BFF),
+                                            Color(0xFF46C2CB),
+                                          ],
+                                          begin: Alignment.centerLeft,
+                                          end: Alignment.centerRight,
+                                        ),
+                                        borderRadius: BorderRadius.circular(16),
                                       ),
-                                      strokeWidth: 2.5,
-                                    ),
-                                  )
-                                : Ink(
-                                    decoration: BoxDecoration(
-                                      gradient: const LinearGradient(
-                                        colors: [
-                                          Color(0xFF6D5BFF),
-                                          Color(0xFF46C2CB),
-                                        ],
-                                        begin: Alignment.centerLeft,
-                                        end: Alignment.centerRight,
-                                      ),
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                    child: Container(
-                                      alignment: Alignment.center,
-                                      child: const Text(
-                                        'Login',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.bold,
+                                      child: Container(
+                                        alignment: Alignment.center,
+                                        child: const Text(
+                                          'Login',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold,
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
                           ),
                         ),
                         const SizedBox(height: 16),
