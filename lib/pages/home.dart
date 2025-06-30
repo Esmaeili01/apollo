@@ -332,9 +332,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 ? const Center(
                                   child: Text('No private chats yet.'),
                                 )
-                                : ListView.separated(
+                                : ListView.builder(
                                   itemCount: _privateChats.length,
-                                  separatorBuilder: (_, __) => const Divider(),
                                   itemBuilder: (context, i) {
                                     final chat = _privateChats[i];
                                     final contact =
@@ -347,61 +346,80 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                         chat['lastMessage'] as String? ?? '';
                                     final lastMessageTime =
                                         chat['lastMessageTime'] as String?;
-                                    return ListTile(
-                                      leading: CircleAvatar(
-                                        backgroundColor: const Color(
-                                          0xFF46C2CB,
+                                    return Container(
+                                      decoration: BoxDecoration(
+                                        border: Border(
+                                          top: BorderSide(
+                                            width: 0.5,
+                                            color: const Color(
+                                              0xFF6D5BFF,
+                                            ).withOpacity(0.3),
+                                          ),
+                                          bottom: BorderSide(
+                                            width: 0.5,
+                                            color: const Color(
+                                              0xFF46C2CB,
+                                            ).withOpacity(0.3),
+                                          ),
                                         ),
-                                        backgroundImage:
-                                            avatarUrl != null &&
-                                                    avatarUrl.isNotEmpty
-                                                ? NetworkImage(avatarUrl)
-                                                : null,
-                                        child:
-                                            avatarUrl == null ||
-                                                    avatarUrl.isEmpty
+                                      ),
+                                      child: ListTile(
+                                        leading: CircleAvatar(
+                                          backgroundColor: const Color(
+                                            0xFF46C2CB,
+                                          ),
+                                          backgroundImage:
+                                              avatarUrl != null &&
+                                                      avatarUrl.isNotEmpty
+                                                  ? NetworkImage(avatarUrl)
+                                                  : null,
+                                          child:
+                                              avatarUrl == null ||
+                                                      avatarUrl.isEmpty
+                                                  ? Text(
+                                                    name.isNotEmpty
+                                                        ? name
+                                                            .substring(0, 1)
+                                                            .toUpperCase()
+                                                        : '?',
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                    ),
+                                                  )
+                                                  : null,
+                                        ),
+                                        title: Text(name),
+                                        subtitle: Text(
+                                          lastMessage,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        trailing:
+                                            lastMessageTime != null
                                                 ? Text(
-                                                  name.isNotEmpty
-                                                      ? name
-                                                          .substring(0, 1)
-                                                          .toUpperCase()
-                                                      : '?',
+                                                  lastMessageTime
+                                                      .substring(0, 16)
+                                                      .replaceAll('T', ' '),
                                                   style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 12,
+                                                    color: Colors.black54,
                                                   ),
                                                 )
                                                 : null,
+                                        onTap: () {
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder:
+                                                  (context) => PrivateChat(
+                                                    contact: contact,
+                                                  ),
+                                            ),
+                                          ).then((_) => _fetchPrivateChats());
+                                        },
                                       ),
-                                      title: Text(name),
-                                      subtitle: Text(
-                                        lastMessage,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      trailing:
-                                          lastMessageTime != null
-                                              ? Text(
-                                                lastMessageTime
-                                                    .substring(0, 16)
-                                                    .replaceAll('T', ' '),
-                                                style: const TextStyle(
-                                                  fontSize: 12,
-                                                  color: Colors.black54,
-                                                ),
-                                              )
-                                              : null,
-                                      onTap: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder:
-                                                (context) => PrivateChat(
-                                                  contact: contact,
-                                                ),
-                                          ),
-                                        ).then((_) => _fetchPrivateChats());
-                                      },
                                     );
                                   },
                                 )
@@ -409,9 +427,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                             ? const Center(child: CircularProgressIndicator())
                             : _groups.isEmpty
                             ? const Center(child: Text('No groups yet.'))
-                            : ListView.separated(
+                            : ListView.builder(
                               itemCount: _groups.length,
-                              separatorBuilder: (_, __) => const Divider(),
                               itemBuilder: (context, i) {
                                 final group = _groups[i];
                                 final avatarUrl =
@@ -440,98 +457,118 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                     break;
                                 }
 
-                                return ListTile(
-                                  leading: CircleAvatar(
-                                    backgroundColor: const Color(0xFF46C2CB),
-                                    backgroundImage:
-                                        avatarUrl != null &&
-                                                avatarUrl.isNotEmpty
-                                            ? NetworkImage(avatarUrl)
-                                            : null,
-                                    child:
-                                        (avatarUrl == null || avatarUrl.isEmpty)
-                                            ? const Icon(
-                                              Icons.groups,
-                                              color: Colors.white,
-                                              size: 24,
-                                            )
-                                            : null,
-                                  ),
-                                  title: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          name,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
+                                return Container(
+                                  decoration: BoxDecoration(
+                                    border: Border(
+                                      top: BorderSide(
+                                        width: 0.5,
+                                        color: const Color(
+                                          0xFF6D5BFF,
+                                        ).withOpacity(0.3),
                                       ),
-                                      if (role > 0)
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 6,
-                                            vertical: 2,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: roleColor,
-                                            borderRadius: BorderRadius.circular(
-                                              8,
-                                            ),
-                                          ),
-                                          child: Text(
-                                            roleText,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                    ],
+                                      bottom: BorderSide(
+                                        width: 0.5,
+                                        color: const Color(
+                                          0xFF46C2CB,
+                                        ).withOpacity(0.3),
+                                      ),
+                                    ),
                                   ),
-                                  subtitle: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      if (bio.isNotEmpty)
-                                        Text(
-                                          bio,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(fontSize: 13),
-                                        ),
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            isPublic
-                                                ? Icons.public
-                                                : Icons.lock,
-                                            size: 12,
-                                            color: Colors.grey[600],
+                                  child: ListTile(
+                                    leading: CircleAvatar(
+                                      backgroundColor: const Color(0xFF46C2CB),
+                                      backgroundImage:
+                                          avatarUrl != null &&
+                                                  avatarUrl.isNotEmpty
+                                              ? NetworkImage(avatarUrl)
+                                              : null,
+                                      child:
+                                          (avatarUrl == null ||
+                                                  avatarUrl.isEmpty)
+                                              ? const Icon(
+                                                Icons.groups,
+                                                color: Colors.white,
+                                                size: 24,
+                                              )
+                                              : null,
+                                    ),
+                                    title: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            name,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                            ),
                                           ),
-                                          const SizedBox(width: 4),
+                                        ),
+                                        if (role > 0)
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 6,
+                                              vertical: 2,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: roleColor,
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                            ),
+                                            child: Text(
+                                              roleText,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    subtitle: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        if (bio.isNotEmpty)
                                           Text(
-                                            isPublic ? 'Public' : 'Private',
-                                            style: TextStyle(
-                                              fontSize: 12,
+                                            bio,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              isPublic
+                                                  ? Icons.public
+                                                  : Icons.lock,
+                                              size: 12,
                                               color: Colors.grey[600],
                                             ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              isPublic ? 'Public' : 'Private',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.grey[600],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder:
+                                              (context) =>
+                                                  GroupChatPage(group: group),
+                                        ),
+                                      ).then((_) => _fetchGroups());
+                                    },
                                   ),
-                                  onTap: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder:
-                                            (context) =>
-                                                GroupChatPage(group: group),
-                                      ),
-                                    ).then((_) => _fetchGroups());
-                                  },
                                 );
                               },
                             ),

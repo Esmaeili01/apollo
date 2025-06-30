@@ -13,6 +13,7 @@ class _ContactsState extends State<Contacts> {
   final TextEditingController _usernameController = TextEditingController();
   bool _isLoading = false;
   String? _error;
+  String? _dialogError;
   List<Map<String, dynamic>> _contacts = [];
 
   @override
@@ -249,8 +250,7 @@ class _ContactsState extends State<Contacts> {
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
-                                    if (c['is_online'] == true ||
-                                        _isRecentlyOnline(lastSeen))
+                                    if (c['is_online'] == true)
                                       Text(
                                         'online',
                                         style: const TextStyle(
@@ -261,7 +261,7 @@ class _ContactsState extends State<Contacts> {
                                       )
                                     else if (lastSeen != null)
                                       Text(
-                                        'Last seen: ${_formatLastSeen(lastSeen)}',
+                                        _getStatusText(lastSeen),
                                         style: const TextStyle(
                                           fontSize: 13,
                                           color: Colors.grey,
@@ -269,14 +269,17 @@ class _ContactsState extends State<Contacts> {
                                       ),
                                   ],
                                 ),
-                                subtitle: bio.isNotEmpty ? Text(bio) : null,
+                                subtitle: null,
                                 trailing: IconButton(
                                   icon: const Icon(
                                     Icons.delete,
                                     color: Colors.red,
                                   ),
                                   onPressed:
-                                      () => _removeContact(c['id'] as String),
+                                      () => _showRemoveContactDialog(
+                                        c['id'] as String,
+                                        c['name'] as String? ?? '',
+                                      ),
                                   tooltip: 'Remove',
                                 ),
                               ),
@@ -311,6 +314,256 @@ class _ContactsState extends State<Contacts> {
   void _showAddContactDialog(BuildContext context) {
     final usernameController = TextEditingController();
     final nicknameController = TextEditingController();
+    _dialogError = null;
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: const Text('Add Contact'),
+              content: SizedBox(
+                width: MediaQuery.of(context).size.width * 0.8,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_dialogError != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: Colors.red.withOpacity(0.3),
+                          ),
+                        ),
+                        child: Text(
+                          _dialogError!,
+                          style: const TextStyle(
+                            color: Colors.red,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    TextField(
+                      controller: usernameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Username',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(16)),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(16)),
+                          borderSide: BorderSide(
+                            color: Color(0xFF6D5BFF),
+                            width: 1.5,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(16)),
+                          borderSide: BorderSide(
+                            color: Color(0xFF46C2CB),
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: nicknameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Nickname',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(16)),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(16)),
+                          borderSide: BorderSide(
+                            color: Color(0xFF6D5BFF),
+                            width: 1.5,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(16)),
+                          borderSide: BorderSide(
+                            color: Color(0xFF46C2CB),
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    elevation: 0,
+                    backgroundColor: Colors.transparent,
+                    shadowColor: Colors.transparent,
+                  ).copyWith(
+                    backgroundColor: MaterialStateProperty.resolveWith<Color?>(
+                      (states) => null,
+                    ),
+                  ),
+                  onPressed: () async {
+                    final username = usernameController.text.trim();
+                    final nickname = nicknameController.text.trim();
+                    if (username.isEmpty || nickname.isEmpty) {
+                      setDialogState(() {
+                        _dialogError =
+                            'Please enter both username and nickname.';
+                      });
+                      return;
+                    }
+
+                    // Check if user is logged in
+                    final user = Supabase.instance.client.auth.currentUser;
+                    if (user == null) {
+                      setDialogState(() {
+                        _dialogError = 'Not logged in.';
+                      });
+                      return;
+                    }
+
+                    // Find the user by username
+                    final res =
+                        await Supabase.instance.client
+                            .from('profiles')
+                            .select('id, name, bio, avatar_url')
+                            .eq('username', username)
+                            .maybeSingle();
+
+                    if (res == null) {
+                      setDialogState(() {
+                        _dialogError = 'No user found with this username.';
+                      });
+                      return;
+                    }
+
+                    if (res['id'] == user.id) {
+                      setDialogState(() {
+                        _dialogError = 'You cannot add yourself.';
+                      });
+                      return;
+                    }
+
+                    // Prevent duplicates
+                    if (_contacts.any((c) => c['id'] == res['id'])) {
+                      setDialogState(() {
+                        _dialogError = 'This user is already in your contacts.';
+                      });
+                      return;
+                    }
+
+                    // Insert into contacts table with nickname
+                    final insertRes =
+                        await Supabase.instance.client.from('contacts').insert({
+                          'user_id': user.id,
+                          'contact_id': res['id'],
+                          'nickname': nickname,
+                        }).select();
+
+                    if (insertRes == null || insertRes.isEmpty) {
+                      setDialogState(() {
+                        _dialogError =
+                            'Failed to add contact. Please try again.';
+                      });
+                      return;
+                    }
+
+                    // Success - close dialog and update contacts
+                    Navigator.of(context).pop();
+                    setState(() {
+                      _contacts.add(res);
+                      _isLoading = false;
+                      _error = null;
+                    });
+                  },
+                  child: Ink(
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF6D5BFF), Color(0xFF46C2CB)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Container(
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      child: const Text(
+                        'Add',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  String _getStatusText(dynamic lastSeen) {
+    if (lastSeen == null) return 'last seen recently';
+    final dt = DateTime.tryParse(lastSeen.toString())?.toLocal();
+    if (dt == null) return 'last seen recently';
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    if (diff.inMinutes < 1) return 'last seen just now';
+    if (diff.inMinutes < 60) return 'last seen ${diff.inMinutes} min ago';
+    if (diff.inHours < 24 && now.day == dt.day) {
+      return 'last seen ${diff.inHours} hr ago';
+    }
+    if (diff.inHours < 48 && now.day - dt.day == 1) {
+      return 'last seen yesterday at ${_formatTime(dt)}';
+    }
+    return 'last seen on ${_formatDate(dt)} at ${_formatTime(dt)}';
+  }
+
+  String _formatTime(DateTime dt) {
+    return dt.hour.toString().padLeft(2, '0') +
+        ':' +
+        dt.minute.toString().padLeft(2, '0');
+  }
+
+  String _formatDate(DateTime dt) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${months[dt.month - 1]} ${dt.day.toString().padLeft(2, '0')}, ${dt.year}';
+  }
+
+  void _showRemoveContactDialog(String contactId, String contactName) {
     showDialog(
       context: context,
       builder: (context) {
@@ -318,26 +571,9 @@ class _ContactsState extends State<Contacts> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
-          title: const Text('Add Contact'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: usernameController,
-                decoration: const InputDecoration(
-                  labelText: 'Username',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: nicknameController,
-                decoration: const InputDecoration(
-                  labelText: 'Nickname',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
+          title: const Text('Remove Contact'),
+          content: Text(
+            'Are you sure you want to remove $contactName from your contacts?',
           ),
           actions: [
             ElevatedButton(
@@ -354,18 +590,47 @@ class _ContactsState extends State<Contacts> {
                   (states) => null,
                 ),
               ),
-              onPressed: () async {
-                final username = usernameController.text.trim();
-                final nickname = nicknameController.text.trim();
-                if (username.isEmpty || nickname.isEmpty) {
-                  setState(() {
-                    _error = 'Please enter both username and nickname.';
-                  });
-                  return;
-                }
+              onPressed: () {
                 Navigator.of(context).pop();
-                await _addContactWithNickname(username, nickname);
+                _removeContact(contactId);
               },
+              child: Ink(
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Container(
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  child: const Text(
+                    'Remove',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 1),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                padding: EdgeInsets.zero,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                elevation: 0,
+                backgroundColor: Colors.transparent,
+                shadowColor: Colors.transparent,
+              ).copyWith(
+                backgroundColor: MaterialStateProperty.resolveWith<Color?>(
+                  (states) => null,
+                ),
+              ),
+              onPressed: () => Navigator.of(context).pop(),
               child: Ink(
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
@@ -382,7 +647,7 @@ class _ContactsState extends State<Contacts> {
                     vertical: 8,
                   ),
                   child: const Text(
-                    'Add',
+                    'Cancel',
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
@@ -395,87 +660,5 @@ class _ContactsState extends State<Contacts> {
         );
       },
     );
-  }
-
-  Future<void> _addContactWithNickname(String username, String nickname) async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      setState(() {
-        _isLoading = false;
-        _error = 'Not logged in.';
-      });
-      return;
-    }
-    // Find the user by username
-    final res =
-        await Supabase.instance.client
-            .from('profiles')
-            .select('id, name, bio, avatar_url')
-            .eq('username', username)
-            .maybeSingle();
-    if (res == null) {
-      setState(() {
-        _isLoading = false;
-        _error = 'No user found';
-      });
-      return;
-    }
-    if (res['id'] == user.id) {
-      setState(() {
-        _isLoading = false;
-        _error = 'You cannot add yourself.';
-      });
-      return;
-    }
-    // Prevent duplicates
-    if (_contacts.any((c) => c['id'] == res['id'])) {
-      setState(() {
-        _isLoading = false;
-        _error = 'Already in contacts.';
-      });
-      return;
-    }
-    // Insert into contacts table with nickname
-    final insertRes =
-        await Supabase.instance.client.from('contacts').insert({
-          'user_id': user.id,
-          'contact_id': res['id'],
-          'nickname': nickname,
-        }).select();
-    if (insertRes == null || insertRes.isEmpty) {
-      setState(() {
-        _isLoading = false;
-        _error = 'Failed to add contact.';
-      });
-      return;
-    }
-    setState(() {
-      _contacts.add(res);
-      _isLoading = false;
-      _error = null;
-    });
-  }
-
-  String _formatLastSeen(dynamic lastSeen) {
-    if (lastSeen == null) return 'Unknown';
-    final dt = DateTime.tryParse(lastSeen.toString());
-    if (dt == null) return 'Unknown';
-    final now = DateTime.now();
-    final diff = now.difference(dt);
-    if (diff.inMinutes < 1) return 'just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
-    if (diff.inHours < 24) return '${diff.inHours} hr ago';
-    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
-  }
-
-  bool _isRecentlyOnline(dynamic lastSeen) {
-    if (lastSeen == null) return false;
-    final dt = DateTime.tryParse(lastSeen.toString());
-    if (dt == null) return false;
-    return DateTime.now().difference(dt).inMinutes < 2;
   }
 }
