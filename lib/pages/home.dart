@@ -96,7 +96,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     final res = await Supabase.instance.client
         .from('messages')
         .select(
-          'id, sender_id, receiver_id, content, created_at, is_read, sender:sender_id (id, name, avatar_url), receiver:receiver_id (id, name, avatar_url)',
+          'id, sender_id, receiver_id, content, created_at, is_seen, sender:sender_id (id, name, avatar_url), receiver:receiver_id (id, name, avatar_url)',
         )
         .or('sender_id.eq.${user.id},receiver_id.eq.${user.id}')
         .is_('group_id', null)
@@ -113,7 +113,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           'contact': contact,
           'lastMessage': msg['content'],
           'lastMessageTime': msg['created_at'],
-          'isRead': msg['is_read'],
+          'isSeen': msg['is_seen'],
         };
       }
     }

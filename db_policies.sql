@@ -69,6 +69,11 @@ CREATE POLICY "Allow update own messages" ON public.messages
 FOR UPDATE
 USING (sender_id = auth.uid());
 
+-- Allow receivers to update message status (is_seen, is_delivered)
+CREATE POLICY "Allow update message status by receiver" ON public.messages
+FOR UPDATE
+USING (receiver_id = auth.uid());
+
 -- Allow users to delete their own messages
 CREATE POLICY "Allow delete own messages" ON public.messages
 FOR DELETE

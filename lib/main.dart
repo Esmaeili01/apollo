@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'utils/online_status_manager.dart';
+// import 'utils/online_status_manager.dart';
 import 'pages/splash.dart';
 import 'pages/login.dart';
 import 'pages/signup.dart';
@@ -13,7 +13,7 @@ const supabaseAnonKey =
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
-  OnlineStatusManager().start();
+  // OnlineStatusManager().start();  NO NEED WITH CRON [S]
   runApp(MyApp());
 }
 
@@ -48,7 +48,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (user == null) return;
     await Supabase.instance.client
         .from('profiles')
-        .update({'last_seen': DateTime.now().toIso8601String()})
+        .update({'last_seen': DateTime.now().toUtc().toIso8601String()})
         .eq('id', user.id);
   }
 
