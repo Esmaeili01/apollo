@@ -5,6 +5,7 @@ import 'dart:async';
 import 'user_profile.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import '../main.dart'; // Import to access currentOpenChatContactId
 
 // dart:html is web-only. We conditionally import it.
 import 'dart:html' as html;
@@ -67,6 +68,9 @@ class _PrivateChatState extends State<PrivateChat> {
   // Add: Reply state
   Map<String, dynamic>? _replyToMessage;
 
+  bool _notificationsEnabled = true;
+  bool _notificationSettingLoaded = false;
+
   /// Generates a consistent, canonical channel name for a private chat
   /// by sorting the user IDs. This ensures both users subscribe to the same channel.
   static String getPrivateChatChannelName(String userId1, String userId2) {
@@ -77,21 +81,19 @@ class _PrivateChatState extends State<PrivateChat> {
   @override
   void initState() {
     super.initState();
+    currentOpenChatContactId = widget.contact['id'];
     _fetchInitialData().then((_) {
       if (mounted) {
         _subscribeToMessages();
         _subscribeToContactStatus();
+        _loadNotificationSetting();
       }
     });
   }
 
-  Future<void> _fetchInitialData() async {
-    // Fetch profile and messages concurrently for faster loading.
-    await Future.wait([_fetchContactProfile(), _fetchMessages()]);
-  }
-
   @override
   void dispose() {
+    currentOpenChatContactId = null;
     _messageController.dispose();
     _editController.dispose();
     _scrollController.dispose();
@@ -120,9 +122,9 @@ class _PrivateChatState extends State<PrivateChat> {
     try {
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) return;
-      
+
       final contactId = widget.contact['id'];
-      
+
       // Mark all messages from the contact as seen
       await Supabase.instance.client
           .from('messages')
@@ -145,59 +147,76 @@ class _PrivateChatState extends State<PrivateChat> {
 
     final channelName = getPrivateChatChannelName(user.id, contactId);
 
-    // Subscribe to INSERT events for new messages
-    _messagesSub = Supabase.instance.client.channel(channelName).on(
-      RealtimeListenTypes.postgresChanges,
-      ChannelFilter(event: 'INSERT', schema: 'public', table: 'messages'),
-      (payload, [ref]) {
-        final newMessage = payload['new'] as Map<String, dynamic>;
-        final isForThisChat =
-            (newMessage['sender_id'] == user.id &&
-                newMessage['receiver_id'] == contactId) ||
-            (newMessage['sender_id'] == contactId &&
-                newMessage['receiver_id'] == user.id);
+    _messagesSub = Supabase.instance.client
+        .channel(channelName)
+        .on(
+          RealtimeListenTypes.postgresChanges,
+          ChannelFilter(event: 'INSERT', schema: 'public', table: 'messages'),
+          (payload, [ref]) async {
+            final newMessage = payload['new'] as Map<String, dynamic>;
+            final isForThisChat =
+                (newMessage['sender_id'] == user.id &&
+                    newMessage['receiver_id'] == contactId) ||
+                (newMessage['sender_id'] == contactId &&
+                    newMessage['receiver_id'] == user.id);
 
-        if (isForThisChat && mounted) {
-          setState(() {
-            // Prevent duplicates from race conditions
-            if (!_messages.any((msg) => msg['id'] == newMessage['id'])) {
-              _messages.add(newMessage);
-              _messages.sort(
-                (a, b) => DateTime.parse(
-                  a['created_at'],
-                ).compareTo(DateTime.parse(b['created_at'])),
-              );
-            }
-          });
-          _scrollToBottom();
-          
-          // If this is a message received from the contact, mark it as seen
-          if (newMessage['sender_id'] == contactId) {
-            _markMessageAsSeen(newMessage['id']);
-          }
-        }
-      },
-    ).on(
-      RealtimeListenTypes.postgresChanges,
-      ChannelFilter(event: 'UPDATE', schema: 'public', table: 'messages'),
-      (payload, [ref]) {
-        final updatedMessage = payload['new'] as Map<String, dynamic>;
-        final isForThisChat =
-            (updatedMessage['sender_id'] == user.id &&
-                updatedMessage['receiver_id'] == contactId) ||
-            (updatedMessage['sender_id'] == contactId &&
-                updatedMessage['receiver_id'] == user.id);
+            if (isForThisChat && mounted) {
+              setState(() {
+                // Prevent duplicates from race conditions
+                if (!_messages.any((msg) => msg['id'] == newMessage['id'])) {
+                  _messages.add(newMessage);
+                  _messages.sort(
+                    (a, b) => DateTime.parse(
+                      a['created_at'],
+                    ).compareTo(DateTime.parse(b['created_at'])),
+                  );
+                }
+              });
+              _scrollToBottom();
 
-        if (isForThisChat && mounted) {
-          setState(() {
-            final index = _messages.indexWhere((msg) => msg['id'] == updatedMessage['id']);
-            if (index != -1) {
-              _messages[index] = updatedMessage;
+              // Notification logic
+              final isMine = newMessage['sender_id'] == user.id;
+              if (!isMine &&
+                  _notificationsEnabled &&
+                  html.document.visibilityState != 'visible') {
+                // Request permission if not already granted
+                if (html.Notification.permission != 'granted') {
+                  await html.Notification.requestPermission();
+                }
+                if (html.Notification.permission == 'granted') {
+                  html.Notification(
+                    _contactProfile?['name'] ?? 'New message',
+                    body: newMessage['content'] ?? 'Media message',
+                    icon: _contactProfile?['avatar_url'],
+                  );
+                }
+              }
             }
-          });
-        }
-      },
-    );
+          },
+        )
+        .on(
+          RealtimeListenTypes.postgresChanges,
+          ChannelFilter(event: 'UPDATE', schema: 'public', table: 'messages'),
+          (payload, [ref]) {
+            final updatedMessage = payload['new'] as Map<String, dynamic>;
+            final isForThisChat =
+                (updatedMessage['sender_id'] == user.id &&
+                    updatedMessage['receiver_id'] == contactId) ||
+                (updatedMessage['sender_id'] == contactId &&
+                    updatedMessage['receiver_id'] == user.id);
+
+            if (isForThisChat && mounted) {
+              setState(() {
+                final index = _messages.indexWhere(
+                  (msg) => msg['id'] == updatedMessage['id'],
+                );
+                if (index != -1) {
+                  _messages[index] = updatedMessage;
+                }
+              });
+            }
+          },
+        );
     _messagesSub.subscribe((String status, [dynamic error]) {
       if (status == 'SUBSCRIBED') {
         print('Successfully subscribed to messages channel: $channelName');
@@ -277,7 +296,7 @@ class _PrivateChatState extends State<PrivateChat> {
           _messages = List<Map<String, dynamic>>.from(messages);
         });
         _scrollToBottom();
-        
+
         // Mark received messages as seen
         _markReceivedMessagesAsSeen();
       }
@@ -364,7 +383,7 @@ class _PrivateChatState extends State<PrivateChat> {
     if (dt == null) return 'last seen recently';
     final now = DateTime.now();
     final diff = now.difference(dt);
-    if (diff.inMinutes < 1) return 'last seen just now'; 
+    if (diff.inMinutes < 1) return 'last seen just now';
     if (diff.inMinutes < 60) return 'last seen ${diff.inMinutes} min ago';
     if (diff.inHours < 24 && now.day == dt.day) {
       return 'last seen today at ${DateFormat('HH:mm').format(dt)}';
@@ -696,6 +715,47 @@ class _PrivateChatState extends State<PrivateChat> {
     }
   }
 
+  Future<void> _loadNotificationSetting() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    final contactId = widget.contact['id'];
+    if (userId == null || contactId == null) return;
+    final res = await Supabase.instance.client
+        .from('contacts')
+        .select('notifications_enabled')
+        .eq('user_id', userId)
+        .eq('contact_id', contactId)
+        .maybeSingle();
+    setState(() {
+      _notificationsEnabled = res?['notifications_enabled'] ?? true;
+      _notificationSettingLoaded = true;
+    });
+  }
+
+  Future<void> _toggleNotification() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    final contactId = widget.contact['id'];
+    if (userId == null || contactId == null) return;
+    final newValue = !_notificationsEnabled;
+    await Supabase.instance.client
+        .from('contacts')
+        .update({'notifications_enabled': newValue})
+        .eq('user_id', userId)
+        .eq('contact_id', contactId);
+    setState(() {
+      _notificationsEnabled = newValue;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          newValue
+              ? 'Notifications enabled for this chat'
+              : 'Notifications disabled for this chat',
+        ),
+        backgroundColor: newValue ? const Color(0xFF46C2CB) : Colors.red,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final name = _contactProfile?['name'] ?? widget.contact['name'] ?? '';
@@ -752,6 +812,21 @@ class _PrivateChatState extends State<PrivateChat> {
             ],
           ),
         ),
+        actions: [
+          if (_notificationSettingLoaded)
+            IconButton(
+              icon: Icon(
+                _notificationsEnabled
+                    ? Icons.notifications_active
+                    : Icons.notifications_off,
+                color: Colors.white,
+              ),
+              tooltip: _notificationsEnabled
+                  ? 'Disable notifications for this chat'
+                  : 'Enable notifications for this chat',
+              onPressed: _toggleNotification,
+            ),
+        ],
       ),
       body: Container(
         decoration: const BoxDecoration(color: Color(0xFFF5F6FA)),
@@ -780,7 +855,8 @@ class _PrivateChatState extends State<PrivateChat> {
                             : _MessageBubble(
                                 message: msg,
                                 isMe: isMe,
-                                isDelivered: msg['is_delivered'] ?? false, // NEW
+                                isDelivered:
+                                    msg['is_delivered'] ?? false, // NEW
                                 isSeen: msg['is_seen'] ?? false, // NEW
                                 onEdit: (m) => setState(() {
                                   _editingMessage = m;
@@ -930,6 +1006,11 @@ class _PrivateChatState extends State<PrivateChat> {
       },
     );
   }
+
+  Future<void> _fetchInitialData() async {
+    // Fetch profile and messages concurrently for faster loading.
+    await Future.wait([_fetchContactProfile(), _fetchMessages()]);
+  }
 }
 
 /// A dedicated widget for displaying a single message bubble.
@@ -1050,18 +1131,10 @@ class _MessageStatusIcons extends StatelessWidget {
         // Show different icons based on status
         if (!isDelivered)
           // Not sent - show clock icon
-          Icon(
-            Icons.access_time,
-            size: 16,
-            color: color,
-          )
+          Icon(Icons.access_time, size: 16, color: color)
         else if (isDelivered && !isSeen)
           // Delivered but not seen - show single checkmark like Telegram
-          Icon(
-            Icons.done,
-            size: 16,
-            color: color,
-          )
+          Icon(Icons.done, size: 16, color: color)
         else if (isDelivered && isSeen)
           // Seen - show double checkmark with second one in blue
           Row(
@@ -1070,7 +1143,12 @@ class _MessageStatusIcons extends StatelessWidget {
               Icon(
                 Icons.done_all,
                 size: 16,
-                color: const Color.fromARGB(255, 0, 0, 0), // Blue for seen status
+                color: const Color.fromARGB(
+                  255,
+                  0,
+                  0,
+                  0,
+                ), // Blue for seen status
               ),
             ],
           ),

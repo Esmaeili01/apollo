@@ -54,7 +54,7 @@ class _LoginPageState extends State<LoginPage> {
       final user = response.user;
       if (user != null) {
         if (!mounted) return;
-        // OnlineStatusManager().start(); // NO NEED [S]
+        OnlineStatusManager().start(); 
         Navigator.pushReplacementNamed(context, '/home');
       } else {
         _showError('Login failed. Please try again.');
