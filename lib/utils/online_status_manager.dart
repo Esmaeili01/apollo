@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -6,45 +7,41 @@ class OnlineStatusManager with WidgetsBindingObserver {
   factory OnlineStatusManager() => _instance;
   OnlineStatusManager._internal();
 
+  Timer? _heartbeat;
+
   void start() {
     WidgetsBinding.instance.addObserver(this);
-    _setOnline();
+    _setOnline(); // initial call
+    _startHeartbeat();
   }
 
   void stop() {
     WidgetsBinding.instance.removeObserver(this);
-    _setOffline();
+    _heartbeat?.cancel();
   }
 
   Future<void> _setOnline() async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-    await Supabase.instance.client
-        .from('profiles')
-        .update({'is_online': true})
-        .eq('id', user.id);
-  }
-
-  Future<void> _setOffline() async {
+    await Future.delayed(Duration(milliseconds: 500));
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
     await Supabase.instance.client
         .from('profiles')
         .update({
-          'is_online': false,
+          'is_online': true,
           'last_seen': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', user.id);
+  }
+
+  void _startHeartbeat() {
+    _heartbeat?.cancel();
+    _heartbeat = Timer.periodic(const Duration(seconds: 25), (_) => _setOnline());
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _setOnline();
-    } else if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.detached) {
-      _setOffline();
     }
   }
 }
