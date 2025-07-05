@@ -21,7 +21,6 @@ class _GroupCreateState extends State<GroupCreate> {
   File? _avatarFile;
   bool _picking = false;
   String _randomLink = '';
-  bool _isLoading = false;
 
   @override
   void initState() {
@@ -145,7 +144,6 @@ class _GroupCreateState extends State<GroupCreate> {
   Future<void> _createGroup() async {
     if (_formKey.currentState?.validate() ?? false) {
       setState(() {
-        _isLoading = true;
       });
 
       try {
@@ -244,7 +242,6 @@ class _GroupCreateState extends State<GroupCreate> {
         );
       } finally {
         setState(() {
-          _isLoading = false;
         });
       }
     }

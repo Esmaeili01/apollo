@@ -5,7 +5,6 @@ import 'contacts.dart';
 import 'private_chat.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'group_create.dart';
-import 'edit_profile.dart';
 import 'group_chat.dart';
 
 class HomePage extends StatefulWidget {
