@@ -41,34 +41,33 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
           .eq('group_id', widget.group['id']);
 
       setState(() {
-        _members =
-            (response as List).map((member) {
-              final profile = member['profiles'] as Map<String, dynamic>;
-              final role = member['role'] as int? ?? 0;
-              String roleText = '';
-              switch (role) {
-                case 0:
-                  roleText = 'Member';
-                  break;
-                case 1:
-                  roleText = 'Admin';
-                  break;
-                case 2:
-                  roleText = 'Owner';
-                  break;
-              }
-              return {
-                'user_id': member['user_id'],
-                'role': role,
-                'role_text': roleText,
-                'joined_at': member['joined_at'],
-                'name': profile['name'] ?? profile['username'] ?? 'Unknown',
-                'username': profile['username'],
-                'avatar_url': profile['avatar_url'],
-                'bio': profile['bio'],
-                'last_seen': profile['last_seen'],
-              };
-            }).toList();
+        _members = (response as List).map((member) {
+          final profile = member['profiles'] as Map<String, dynamic>;
+          final role = member['role'] as int? ?? 0;
+          String roleText = '';
+          switch (role) {
+            case 0:
+              roleText = 'Member';
+              break;
+            case 1:
+              roleText = 'Admin';
+              break;
+            case 2:
+              roleText = 'Owner';
+              break;
+          }
+          return {
+            'user_id': member['user_id'],
+            'role': role,
+            'role_text': roleText,
+            'joined_at': member['joined_at'],
+            'name': profile['name'] ?? profile['username'] ?? 'Unknown',
+            'username': profile['username'],
+            'avatar_url': profile['avatar_url'],
+            'bio': profile['bio'],
+            'last_seen': profile['last_seen'],
+          };
+        }).toList();
       });
     } catch (e) {
       setState(() {
@@ -155,27 +154,23 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                                     GestureDetector(
                                       onTap:
                                           avatarUrl != null &&
-                                                  avatarUrl.isNotEmpty
-                                              ? () {
-                                                Navigator.of(context).push(
-                                                  PageRouteBuilder(
-                                                    opaque: false,
-                                                    barrierColor: Colors.black,
-                                                    pageBuilder: (
-                                                      context,
-                                                      _,
-                                                      __,
-                                                    ) {
-                                                      return _AvatarFullScreen(
-                                                        avatarUrl: avatarUrl,
-                                                        tag:
-                                                            'group_avatar_$avatarUrl',
-                                                      );
-                                                    },
-                                                  ),
-                                                );
-                                              }
-                                              : null,
+                                              avatarUrl.isNotEmpty
+                                          ? () {
+                                              Navigator.of(context).push(
+                                                PageRouteBuilder(
+                                                  opaque: false,
+                                                  barrierColor: Colors.black,
+                                                  pageBuilder: (context, _, __) {
+                                                    return _AvatarFullScreen(
+                                                      avatarUrl: avatarUrl,
+                                                      tag:
+                                                          'group_avatar_$avatarUrl',
+                                                    );
+                                                  },
+                                                ),
+                                              );
+                                            }
+                                          : null,
                                       child: Hero(
                                         tag: 'group_avatar_$avatarUrl',
                                         child: CircleAvatar(
@@ -185,26 +180,25 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                                           ),
                                           backgroundImage:
                                               avatarUrl != null &&
-                                                      avatarUrl.isNotEmpty
-                                                  ? NetworkImage(avatarUrl)
-                                                  : null,
+                                                  avatarUrl.isNotEmpty
+                                              ? NetworkImage(avatarUrl)
+                                              : null,
                                           child:
                                               (avatarUrl == null ||
-                                                      avatarUrl.isEmpty)
-                                                  ? Text(
-                                                    name.isNotEmpty
-                                                        ? name
+                                                  avatarUrl.isEmpty)
+                                              ? Text(
+                                                  name.isNotEmpty
+                                                      ? name
                                                             .substring(0, 1)
                                                             .toUpperCase()
-                                                        : '?',
-                                                    style: const TextStyle(
-                                                      color: Colors.white,
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      fontSize: 32,
-                                                    ),
-                                                  )
-                                                  : null,
+                                                      : '?',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 32,
+                                                  ),
+                                                )
+                                              : null,
                                         ),
                                       ),
                                     ),
@@ -306,21 +300,20 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                               Icons.more_vert,
                               color: Colors.black54,
                             ),
-                            itemBuilder:
-                                (context) => [
-                                  const PopupMenuItem(
-                                    value: 'edit',
-                                    child: Text('Edit group'),
-                                  ),
-                                  const PopupMenuItem(
-                                    value: 'invite',
-                                    child: Text('Invite members'),
-                                  ),
-                                  const PopupMenuItem(
-                                    value: 'leave',
-                                    child: Text('Leave group'),
-                                  ),
-                                ],
+                            itemBuilder: (context) => [
+                              const PopupMenuItem(
+                                value: 'edit',
+                                child: Text('Edit group'),
+                              ),
+                              const PopupMenuItem(
+                                value: 'invite',
+                                child: Text('Invite members'),
+                              ),
+                              const PopupMenuItem(
+                                value: 'leave',
+                                child: Text('Leave group'),
+                              ),
+                            ],
                             onSelected: (value) {
                               // Handle menu actions here
                             },
@@ -377,12 +370,9 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                                   builder: (context) {
                                     return _AddMemberSheet(
                                       groupId: widget.group['id'],
-                                      currentMemberIds:
-                                          _members
-                                              .map(
-                                                (m) => m['user_id'] as String,
-                                              )
-                                              .toList(),
+                                      currentMemberIds: _members
+                                          .map((m) => m['user_id'] as String)
+                                          .toList(),
                                       onMemberAdded: () async {
                                         Navigator.of(context).pop();
                                         await _fetchMembers();
@@ -434,23 +424,23 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                                       backgroundColor: const Color(0xFF46C2CB),
                                       backgroundImage:
                                           m['avatar_url'] != null &&
-                                                  m['avatar_url'].isNotEmpty
-                                              ? NetworkImage(m['avatar_url'])
-                                              : null,
+                                              m['avatar_url'].isNotEmpty
+                                          ? NetworkImage(m['avatar_url'])
+                                          : null,
                                       child:
                                           (m['avatar_url'] == null ||
-                                                  m['avatar_url'].isEmpty)
-                                              ? Text(
-                                                (m['name'] ?? '?')
-                                                    .toString()
-                                                    .substring(0, 1)
-                                                    .toUpperCase(),
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              )
-                                              : null,
+                                              m['avatar_url'].isEmpty)
+                                          ? Text(
+                                              (m['name'] ?? '?')
+                                                  .toString()
+                                                  .substring(0, 1)
+                                                  .toUpperCase(),
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            )
+                                          : null,
                                     ),
                                     const SizedBox(width: 12),
                                     Expanded(
@@ -636,12 +626,11 @@ class _AddMemberSheetState extends State<_AddMemberSheet> {
       final contacts = List<Map<String, dynamic>>.from(res as List);
       List<Map<String, dynamic>> contactsWithProfiles = [];
       for (final contact in contacts) {
-        final profileRes =
-            await Supabase.instance.client
-                .from('profiles')
-                .select('id, name, bio, avatar_url, last_seen')
-                .eq('id', contact['contact_id'])
-                .maybeSingle();
+        final profileRes = await Supabase.instance.client
+            .from('profiles')
+            .select('id, name, bio, avatar_url, last_seen')
+            .eq('id', contact['contact_id'])
+            .maybeSingle();
         if (profileRes != null &&
             !widget.currentMemberIds.contains(profileRes['id'])) {
           contactsWithProfiles.add(profileRes);
@@ -666,17 +655,17 @@ class _AddMemberSheetState extends State<_AddMemberSheet> {
       _adding = true;
     });
     try {
-      final toAdd =
-          _contacts.where((c) => _selectedIds.contains(c['id'])).toList();
+      final toAdd = _contacts
+          .where((c) => _selectedIds.contains(c['id']))
+          .toList();
       for (final contact in toAdd) {
         // Prevent duplicate membership
-        final existing =
-            await Supabase.instance.client
-                .from('group_members')
-                .select()
-                .eq('group_id', widget.groupId)
-                .eq('user_id', contact['id'])
-                .maybeSingle();
+        final existing = await Supabase.instance.client
+            .from('group_members')
+            .select()
+            .eq('group_id', widget.groupId)
+            .eq('user_id', contact['id'])
+            .maybeSingle();
         if (existing == null) {
           try {
             final data = {
@@ -734,14 +723,13 @@ class _AddMemberSheetState extends State<_AddMemberSheet> {
                 if (_selectedIds.isNotEmpty)
                   TextButton(
                     onPressed: _adding ? null : _addSelectedToGroup,
-                    child:
-                        _adding
-                            ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                            : const Text('Add Selected'),
+                    child: _adding
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Add Selected'),
                   ),
               ],
             ),
@@ -772,33 +760,31 @@ class _AddMemberSheetState extends State<_AddMemberSheet> {
                         backgroundColor: const Color(0xFF46C2CB),
                         backgroundImage:
                             avatarUrl != null && avatarUrl.isNotEmpty
-                                ? NetworkImage(avatarUrl)
-                                : null,
-                        child:
-                            avatarUrl == null || avatarUrl.isEmpty
-                                ? Text(
-                                  name.isNotEmpty
-                                      ? name.substring(0, 1).toUpperCase()
-                                      : '?',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                )
-                                : null,
+                            ? NetworkImage(avatarUrl)
+                            : null,
+                        child: avatarUrl == null || avatarUrl.isEmpty
+                            ? Text(
+                                name.isNotEmpty
+                                    ? name.substring(0, 1).toUpperCase()
+                                    : '?',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              )
+                            : null,
                       ),
                       title: Text(
                         name,
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
-                      subtitle:
-                          bio.isNotEmpty
-                              ? Text(
-                                bio,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              )
-                              : null,
+                      subtitle: bio.isNotEmpty
+                          ? Text(
+                              bio,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            )
+                          : null,
                       trailing: Checkbox(
                         value: selected,
                         onChanged: (val) {

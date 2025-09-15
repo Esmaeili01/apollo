@@ -5,13 +5,9 @@ import 'dart:async';
 import 'user_profile.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import '../main.dart'; // Import to access currentOpenChatContactId
-
-// dart:html is web-only. We conditionally import it.
+import '../main.dart';
 import 'dart:html' as html;
 import 'dart:typed_data';
-
-// NEW: Import for the audio player.
 import 'package:audioplayers/audioplayers.dart';
 
 enum MessageType {
@@ -30,53 +26,26 @@ enum MessageType {
   }
 }
 
-// THE REST OF THE PrivateChat WIDGET REMAINS THE SAME...
-// SCROLL DOWN TO THE _MessageBubble and _MessageContent WIDGETS FOR THE CHANGES.
-// (For brevity, I'm omitting the unchanged parts of the PrivateChat class)
-
 class PrivateChat extends StatefulWidget {
   const PrivateChat({required this.contact, super.key});
   final Map<String, dynamic> contact;
+
   @override
   State<PrivateChat> createState() => _PrivateChatState();
 }
 
 class _PrivateChatState extends State<PrivateChat> {
-  // ... All previous state variables and methods (_messageController, _fetchMessages, etc.)
-  // are here and unchanged.
-
-  // --- OMITTING UNCHANGED METHODS FOR BREVITY ---
-  // _fetchInitialData, _subscribeToMessages, _subscribeToContactStatus,
-  // _fetchContactProfile, _fetchMessages, _scrollToBottom, _sendMessage,
-  // _getStatusText, _showContactInfo, _getFileInfo, _uploadFileToSupabase,
-  // _handleAttachFile, _handleRecordVoice, _sendMultimediaMessage
-  // ARE ALL IDENTICAL TO THE PREVIOUS VERSION.
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final TextEditingController _editController = TextEditingController();
   List<Map<String, dynamic>> _messages = [];
   bool _isLoading = true;
   Map<String, dynamic>? _contactProfile;
   bool _sending = false;
-
-  late final RealtimeChannel _messagesSub;
-  RealtimeChannel? _statusSub;
-
-  // Add: Edit message state
   Map<String, dynamic>? _editingMessage;
-  final TextEditingController _editController = TextEditingController();
-
-  // Add: Reply state
   Map<String, dynamic>? _replyToMessage;
-
   bool _notificationsEnabled = true;
   bool _notificationSettingLoaded = false;
-
-  /// Generates a consistent, canonical channel name for a private chat
-  /// by sorting the user IDs. This ensures both users subscribe to the same channel.
-  static String getPrivateChatChannelName(String userId1, String userId2) {
-    final ids = [userId1, userId2]..sort();
-    return 'private-chat-${ids[0]}-${ids[1]}';
-  }
 
   @override
   void initState() {
@@ -97,12 +66,64 @@ class _PrivateChatState extends State<PrivateChat> {
     _messageController.dispose();
     _editController.dispose();
     _scrollController.dispose();
-    _messagesSub.unsubscribe();
-    _statusSub?.unsubscribe();
+    Supabase.instance.client.channel('*').unsubscribe();
     super.dispose();
   }
 
-  /// Mark a specific message as seen
+  Future<void> _fetchInitialData() async {
+    await Future.wait([_fetchContactProfile(), _fetchMessages()]);
+  }
+
+  Future<void> _fetchContactProfile() async {
+    try {
+      final res = await Supabase.instance.client
+          .from('profiles')
+          .select()
+          .eq('id', widget.contact['id'])
+          .maybeSingle();
+      if (mounted) {
+        setState(() {
+          _contactProfile = res;
+        });
+      }
+    } catch (e) {
+      // Removed print statement
+    }
+  }
+
+  Future<void> _fetchMessages() async {
+    if (mounted) setState(() => _isLoading = true);
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) return;
+      final messages = await Supabase.instance.client
+          .from('messages')
+          .select()
+          .or(
+            'and(sender_id.eq.${user.id},receiver_id.eq.${widget.contact['id']}),and(sender_id.eq.${widget.contact['id']},receiver_id.eq.${user.id})',
+          )
+          .order('created_at', ascending: true);
+      if (mounted) {
+        setState(() {
+          _messages = List<Map<String, dynamic>>.from(messages);
+        });
+        _scrollToBottom();
+        _markReceivedMessagesAsSeen();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading messages: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _markMessageAsSeen(String messageId) async {
     try {
       await Supabase.instance.client
@@ -113,56 +134,54 @@ class _PrivateChatState extends State<PrivateChat> {
           })
           .eq('id', messageId);
     } catch (e) {
-      print('Error marking message as seen: $e');
+      // Removed print statement
     }
   }
 
-  /// Mark all received messages in this chat as seen
   Future<void> _markReceivedMessagesAsSeen() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
     try {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user == null) return;
-
-      final contactId = widget.contact['id'];
-
-      // Mark all messages from the contact as seen
       await Supabase.instance.client
           .from('messages')
           .update({
             'is_seen': true,
             'last_seen': DateTime.now().toUtc().toIso8601String(),
           })
-          .eq('sender_id', contactId)
+          .eq('sender_id', widget.contact['id'])
           .eq('receiver_id', user.id)
           .eq('is_seen', false);
     } catch (e) {
-      print('Error marking messages as seen: $e');
+      // Removed print statement
     }
+  }
+
+  String getPrivateChatChannelName(String userId1, String userId2) {
+    final ids = [userId1, userId2]..sort();
+    return 'private-chat-${ids[0]}-${ids[1]}';
   }
 
   void _subscribeToMessages() {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
-    final contactId = widget.contact['id'];
-
-    final channelName = getPrivateChatChannelName(user.id, contactId);
-
-    _messagesSub = Supabase.instance.client
-        .channel(channelName)
-        .on(
-          RealtimeListenTypes.postgresChanges,
-          ChannelFilter(event: 'INSERT', schema: 'public', table: 'messages'),
-          (payload, [ref]) async {
-            final newMessage = payload['new'] as Map<String, dynamic>;
-            final isForThisChat =
-                (newMessage['sender_id'] == user.id &&
-                    newMessage['receiver_id'] == contactId) ||
-                (newMessage['sender_id'] == contactId &&
-                    newMessage['receiver_id'] == user.id);
-
-            if (isForThisChat && mounted) {
+    final channelName = getPrivateChatChannelName(
+      user.id,
+      widget.contact['id'],
+    );
+    final channel = Supabase.instance.client.channel(channelName)
+      ..on(
+        RealtimeListenTypes.postgresChanges,
+        ChannelFilter(event: 'INSERT', schema: 'public', table: 'messages'),
+        (payload, [ref]) async {
+          final newMessage = payload['new'] as Map<String, dynamic>;
+          final isForThisChat =
+              (newMessage['sender_id'] == user.id &&
+                  newMessage['receiver_id'] == widget.contact['id']) ||
+              (newMessage['sender_id'] == widget.contact['id'] &&
+                  newMessage['receiver_id'] == user.id);
+          if (isForThisChat) {
+            if (mounted) {
               setState(() {
-                // Prevent duplicates from race conditions
                 if (!_messages.any((msg) => msg['id'] == newMessage['id'])) {
                   _messages.add(newMessage);
                   _messages.sort(
@@ -173,60 +192,57 @@ class _PrivateChatState extends State<PrivateChat> {
                 }
               });
               _scrollToBottom();
-
-              // Notification logic
-              final isMine = newMessage['sender_id'] == user.id;
-              if (!isMine &&
-                  _notificationsEnabled &&
-                  html.document.visibilityState != 'visible') {
-                // Request permission if not already granted
-                if (html.Notification.permission != 'granted') {
-                  await html.Notification.requestPermission();
-                }
-                if (html.Notification.permission == 'granted') {
-                  html.Notification(
-                    _contactProfile?['name'] ?? 'New message',
-                    body: newMessage['content'] ?? 'Media message',
-                    icon: _contactProfile?['avatar_url'],
-                  );
-                }
+            }
+            final isMine = newMessage['sender_id'] == user.id;
+            if (!isMine &&
+                _notificationsEnabled &&
+                html.document.visibilityState != 'visible') {
+              final profile = await Supabase.instance.client
+                  .from('profiles')
+                  .select()
+                  .eq('id', widget.contact['id'])
+                  .maybeSingle();
+              if (html.Notification.permission != 'granted')
+                await html.Notification.requestPermission();
+              if (html.Notification.permission == 'granted') {
+                html.Notification(
+                  profile?['name'] ?? 'New message',
+                  body: newMessage['content'] ?? 'Media message',
+                  icon: profile?['avatar_url'],
+                );
               }
             }
-          },
-        )
-        .on(
-          RealtimeListenTypes.postgresChanges,
-          ChannelFilter(event: 'UPDATE', schema: 'public', table: 'messages'),
-          (payload, [ref]) {
-            final updatedMessage = payload['new'] as Map<String, dynamic>;
-            final isForThisChat =
-                (updatedMessage['sender_id'] == user.id &&
-                    updatedMessage['receiver_id'] == contactId) ||
-                (updatedMessage['sender_id'] == contactId &&
-                    updatedMessage['receiver_id'] == user.id);
-
-            if (isForThisChat && mounted) {
-              setState(() {
-                final index = _messages.indexWhere(
-                  (msg) => msg['id'] == updatedMessage['id'],
-                );
-                if (index != -1) {
-                  _messages[index] = updatedMessage;
-                }
-              });
-            }
-          },
-        );
-    _messagesSub.subscribe((String status, [dynamic error]) {
-      if (status == 'SUBSCRIBED') {
-        print('Successfully subscribed to messages channel: $channelName');
-      } else if (status == 'CHANNEL_ERROR' || status == 'CLOSED') {
-        print('Error on messages channel ($channelName): $error');
+            if (!isMine) _markMessageAsSeen(newMessage['id']);
+          }
+        },
+      )
+      ..on(
+        RealtimeListenTypes.postgresChanges,
+        ChannelFilter(event: 'UPDATE', schema: 'public', table: 'messages'),
+        (payload, [ref]) {
+          final updatedMessage = payload['new'] as Map<String, dynamic>;
+          final isForThisChat =
+              (updatedMessage['sender_id'] == user.id &&
+                  updatedMessage['receiver_id'] == widget.contact['id']) ||
+              (updatedMessage['sender_id'] == widget.contact['id'] &&
+                  updatedMessage['receiver_id'] == user.id);
+          if (isForThisChat && mounted) {
+            setState(() {
+              final idx = _messages.indexWhere(
+                (msg) => msg['id'] == updatedMessage['id'],
+              );
+              if (idx != -1) _messages[idx] = updatedMessage;
+            });
+          }
+        },
+      );
+    channel.subscribe((status, [error]) {
+      if (status == 'CHANNEL_ERROR' || status == 'CLOSED') {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
+            SnackBar(
               content: Text(
-                'Connection to chat lost. Please check your internet and restart the app.',
+                'Connection to chat lost: $error. Please check your internet and restart the app.',
               ),
               backgroundColor: Colors.red,
             ),
@@ -237,259 +253,127 @@ class _PrivateChatState extends State<PrivateChat> {
   }
 
   void _subscribeToContactStatus() {
-    final contactId = widget.contact['id'];
-    _statusSub = Supabase.instance.client.channel('public:profiles:status').on(
-      RealtimeListenTypes.postgresChanges,
-      ChannelFilter(
-        event: '*',
-        schema: 'public',
-        table: 'profiles',
-        filter: 'id=eq.$contactId',
-      ),
-      (payload, [ref]) {
-        if (mounted) {
-          _fetchContactProfile();
-        }
-      },
-    );
-    _statusSub?.subscribe();
-  }
-
-  Future<void> _fetchContactProfile() async {
-    try {
-      final contactId = widget.contact['id'];
-      final res = await Supabase.instance.client
-          .from('profiles')
-          .select()
-          .eq('id', contactId)
-          .maybeSingle();
-      if (mounted) {
-        setState(() {
-          _contactProfile = res;
-        });
-      }
-    } catch (e) {
-      print('Error fetching contact profile: $e');
-    }
-  }
-
-  Future<void> _fetchMessages() async {
-    if (mounted) setState(() => _isLoading = true);
-    try {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user == null) {
-        if (mounted) setState(() => _isLoading = false);
-        return;
-      }
-      final contactId = widget.contact['id'];
-
-      final List messages = await Supabase.instance.client
-          .from('messages')
-          .select()
-          .or(
-            'and(sender_id.eq.${user.id},receiver_id.eq.$contactId),and(sender_id.eq.$contactId,receiver_id.eq.${user.id})',
-          )
-          .order('created_at', ascending: true);
-
-      if (mounted) {
-        setState(() {
-          _messages = List<Map<String, dynamic>>.from(messages);
-        });
-        _scrollToBottom();
-
-        // Mark received messages as seen
-        _markReceivedMessagesAsSeen();
-      }
-    } catch (e) {
-      print('Error fetching messages: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading messages: ${e.toString()}'),
-            backgroundColor: Colors.red,
+    final channel = Supabase.instance.client
+        .channel('public:profiles:status')
+        .on(
+          RealtimeListenTypes.postgresChanges,
+          ChannelFilter(
+            event: '*',
+            schema: 'public',
+            table: 'profiles',
+            filter: 'id=eq.${widget.contact['id']}',
           ),
+          (payload, [ref]) => _fetchContactProfile(),
         );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+    channel.subscribe();
   }
 
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
     setState(() => _sending = true);
-
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      setState(() => _sending = false);
-      return;
-    }
-    _messageController.clear();
-
     try {
-      final contactId = widget.contact['id'];
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) return;
       await Supabase.instance.client.from('messages').insert({
         'sender_id': user.id,
-        'receiver_id': contactId,
+        'receiver_id': widget.contact['id'],
         'content': text,
         'type': MessageType.text.name,
-        'is_delivered': true, // Mark as delivered on send
-        'is_seen': false, // Not seen yet
+        'is_delivered': true,
+        'is_seen': false,
         if (_replyToMessage != null) 'reply_to_id': _replyToMessage!['id'],
       });
-      setState(() {
-        _replyToMessage = null;
-      });
+      _messageController.clear();
+      setState(() => _replyToMessage = null);
     } catch (e) {
-      print('Error sending message: $e');
-      _messageController.text = text; // Restore text on failure
+      _messageController.text = text;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to send message: ${e.toString()}'),
+            content: Text('Failed to send message: $e'),
             backgroundColor: Colors.red,
           ),
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _sending = false);
-      }
+      if (mounted) setState(() => _sending = false);
     }
-  }
-
-  String _getStatusText() {
-    if (_contactProfile == null) return 'loading...';
-    final isOnline = _contactProfile!['is_online'] == true;
-    if (isOnline) return 'online';
-    final lastSeen = _contactProfile!['last_seen'];
-    if (lastSeen == null) return 'last seen recently';
-    final dt = DateTime.tryParse(lastSeen)?.toLocal();
-    if (dt == null) return 'last seen recently';
-    final now = DateTime.now();
-    final diff = now.difference(dt);
-    if (diff.inMinutes < 1) return 'last seen just now';
-    if (diff.inMinutes < 60) return 'last seen ${diff.inMinutes} min ago';
-    if (diff.inHours < 24 && now.day == dt.day) {
-      return 'last seen today at ${DateFormat('HH:mm').format(dt)}';
-    }
-    //  NO NEED [S]
-    // if (diff.inHours < 48 && now.day - dt.day == 1) {
-    //   return 'last seen yesterday at ${DateFormat('HH:mm').format(dt)}';
-    // }
-    return 'last seen on ${DateFormat('MMM dd').format(dt)}';
-  }
-
-  void _showContactInfo() {
-    if (_contactProfile == null) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => UserProfilePage(profile: _contactProfile!),
-      ),
-    );
   }
 
   ({String bucket, String type}) _getFileInfo(String? extension) {
     final ext = extension?.toLowerCase() ?? '';
-    if (['jpg', 'jpeg', 'png', 'gif'].contains(ext)) {
+    if (['jpg', 'jpeg', 'png', 'gif'].contains(ext))
       return (bucket: 'pics', type: MessageType.image.name);
-    }
-    if (['mp4', 'mov', 'avi', 'webm'].contains(ext)) {
+    if (['mp4', 'mov', 'avi', 'webm'].contains(ext))
       return (bucket: 'vids', type: MessageType.video.name);
-    }
-    if (['mp3', 'wav', 'ogg'].contains(ext)) {
+    if (['mp3', 'wav', 'ogg'].contains(ext))
       return (bucket: 'musics', type: MessageType.music.name);
-    }
-    // WebM is a common format for browser-based recording
-    if (ext == 'm4a' || ext == 'webm') {
+    if (ext == 'm4a' || ext == 'webm')
       return (bucket: 'voices', type: MessageType.voice.name);
-    }
     return (bucket: 'docs', type: MessageType.doc.name);
   }
 
-  Future<String?> _uploadFileToSupabase(
-    PlatformFile file,
-    String bucket,
-  ) async {
-    try {
-      final storage = Supabase.instance.client.storage.from(bucket);
-      final userId = Supabase.instance.client.auth.currentUser!.id;
-      final fileExt = file.extension ?? 'bin';
-      final filePath =
-          '$userId/${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-      final bytes = file.bytes;
-
-      if (bytes == null) {
-        throw 'File data is empty.';
-      }
-
-      await storage.uploadBinary(
-        filePath,
-        bytes,
-        fileOptions: const FileOptions(upsert: false),
-      );
-      return storage.getPublicUrl(filePath);
-    } on StorageException catch (e) {
-      print('Error uploading file: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Upload failed: ${e.message}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      return null;
-    } catch (e) {
-      print('Unexpected error uploading file: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('An unexpected error occurred: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      return null;
-    }
+  Future<String> _uploadFileToSupabase(PlatformFile file, String bucket) async {
+    final storage = Supabase.instance.client.storage.from(bucket);
+    final userId = Supabase.instance.client.auth.currentUser!.id;
+    final fileExt = file.extension ?? 'bin';
+    final filePath =
+        '$userId/${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+    final bytes = file.bytes;
+    if (bytes == null) throw 'File data is empty.';
+    await storage.uploadBinary(
+      filePath,
+      bytes,
+      fileOptions: const FileOptions(upsert: false),
+    );
+    return storage.getPublicUrl(filePath);
   }
 
   Future<void> _handleAttachFile() async {
-    final result = await FilePicker.platform.pickFiles(withData: true);
-    if (result == null || result.files.isEmpty) return;
-
-    final file = result.files.first;
-    final fileInfo = _getFileInfo(file.extension);
-
-    // Show a sending indicator while uploading
     setState(() => _sending = true);
-    final url = await _uploadFileToSupabase(file, fileInfo.bucket);
-    if (mounted) setState(() => _sending = false);
+    try {
+      final result = await FilePicker.platform.pickFiles(withData: true);
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.first;
+      final fileInfo = _getFileInfo(file.extension);
+      final url = await _uploadFileToSupabase(file, fileInfo.bucket);
+      await _sendMultimediaMessage(
+        type: fileInfo.type,
+        urls: [url],
+        content: file.name,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to upload file: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
 
-    if (url == null) return; // Error was already shown
-
-    // Pass the original filename as content for display purposes
-    await _sendMultimediaMessage(
-      type: fileInfo.type,
-      urls: [url],
-      content: file.name,
-    );
+  Future<void> _sendMultimediaMessage({
+    required String type,
+    required List<String> urls,
+    String? content,
+  }) async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+    await Supabase.instance.client.from('messages').insert({
+      'sender_id': user.id,
+      'receiver_id': widget.contact['id'],
+      'content': content,
+      'type': type,
+      'is_multimedia': true,
+      'media_url': urls,
+      'is_delivered': true,
+      'is_seen': false,
+    });
   }
 
   Future<void> _handleRecordVoice() async {
@@ -502,34 +386,23 @@ class _PrivateChatState extends State<PrivateChat> {
       );
       return;
     }
-
+    setState(() => _sending = true);
     try {
       final stream = await html.window.navigator.mediaDevices?.getUserMedia({
         'audio': true,
       });
-      if (stream == null) {
-        throw 'Microphone not available.';
-      }
-
+      if (stream == null) throw 'Microphone not available.';
       final mediaRecorder = html.MediaRecorder(stream, {
         'mimeType': 'audio/webm',
       });
       final List<html.Blob> chunks = [];
       final completer = Completer<void>();
-
       mediaRecorder.addEventListener('dataavailable', (event) {
         final e = event as html.BlobEvent;
-        if (e.data != null && e.data!.size > 0) {
-          chunks.add(e.data!);
-        }
+        if (e.data != null && e.data!.size > 0) chunks.add(e.data!);
       });
-
-      mediaRecorder.addEventListener('stop', (event) {
-        completer.complete(); // Mark as finished
-      });
-
+      mediaRecorder.addEventListener('stop', (event) => completer.complete());
       mediaRecorder.start();
-
       await showDialog(
         context: context,
         barrierDismissible: false,
@@ -539,7 +412,7 @@ class _PrivateChatState extends State<PrivateChat> {
           actions: [
             TextButton(
               onPressed: () {
-                mediaRecorder.stop(); // This triggers the 'stop' event
+                mediaRecorder.stop();
                 Navigator.of(context).pop();
               },
               child: const Text('Stop'),
@@ -547,76 +420,29 @@ class _PrivateChatState extends State<PrivateChat> {
           ],
         ),
       );
-
       await completer.future;
       stream.getTracks().forEach((track) => track.stop());
       if (chunks.isEmpty) return;
-
       final blob = html.Blob(chunks, 'audio/webm');
       final reader = html.FileReader();
       final loadCompleter = Completer<Uint8List>();
-
-      reader.onLoadEnd.listen((_) {
-        loadCompleter.complete(reader.result as Uint8List);
-      });
+      reader.onLoadEnd.listen(
+        (_) => loadCompleter.complete(reader.result as Uint8List),
+      );
       reader.readAsArrayBuffer(blob);
       final bytes = await loadCompleter.future;
-
       final file = PlatformFile(
         name: 'voice_${DateTime.now().millisecondsSinceEpoch}.webm',
         size: bytes.length,
         bytes: bytes,
       );
-
-      setState(() => _sending = true);
       final url = await _uploadFileToSupabase(file, 'voices');
-      if (mounted) setState(() => _sending = false);
-
-      if (url != null) {
-        await _sendMultimediaMessage(type: MessageType.voice.name, urls: [url]);
-      }
+      await _sendMultimediaMessage(type: MessageType.voice.name, urls: [url]);
     } catch (e) {
-      print('Error handling voice recording: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Could not record voice: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _sendMultimediaMessage({
-    required String type,
-    required List<String> urls,
-    String? content,
-  }) async {
-    setState(() => _sending = true);
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      setState(() => _sending = false);
-      return;
-    }
-    final contactId = widget.contact['id'];
-    try {
-      await Supabase.instance.client.from('messages').insert({
-        'sender_id': user.id,
-        'receiver_id': contactId,
-        'content': content,
-        'type': type,
-        'is_multimedia': true,
-        'media_url': urls,
-        'is_delivered': true, // Mark as delivered on send
-        'is_seen': false, // Not seen yet
-      });
-    } catch (e) {
-      print('Error sending multimedia message: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to send file: ${e.toString()}'),
+            content: Text('Could not record voice: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -626,11 +452,7 @@ class _PrivateChatState extends State<PrivateChat> {
     }
   }
 
-  // Add: Delete message logic
   Future<void> _deleteMessage(Map<String, dynamic> message) async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-    if (message['sender_id'] != user.id) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -650,6 +472,8 @@ class _PrivateChatState extends State<PrivateChat> {
     );
     if (confirm != true) return;
     try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null || message['sender_id'] != user.id) return;
       await Supabase.instance.client
           .from('messages')
           .delete()
@@ -677,15 +501,13 @@ class _PrivateChatState extends State<PrivateChat> {
     }
   }
 
-  // Add: Edit message logic (text only)
   Future<void> _editMessage(
     Map<String, dynamic> message,
     String newText,
   ) async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-    if (message['sender_id'] != user.id) return;
     try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null || message['sender_id'] != user.id) return;
       await Supabase.instance.client
           .from('messages')
           .update({'content': newText})
@@ -716,42 +538,87 @@ class _PrivateChatState extends State<PrivateChat> {
   }
 
   Future<void> _loadNotificationSetting() async {
-    final userId = Supabase.instance.client.auth.currentUser?.id;
-    final contactId = widget.contact['id'];
-    if (userId == null || contactId == null) return;
-    final res = await Supabase.instance.client
-        .from('contacts')
-        .select('notifications_enabled')
-        .eq('user_id', userId)
-        .eq('contact_id', contactId)
-        .maybeSingle();
-    setState(() {
-      _notificationsEnabled = res?['notifications_enabled'] ?? true;
-      _notificationSettingLoaded = true;
-    });
+    try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) return;
+      final res = await Supabase.instance.client
+          .from('contacts')
+          .select('notifications_enabled')
+          .eq('user_id', userId)
+          .eq('contact_id', widget.contact['id'])
+          .maybeSingle();
+      setState(() {
+        _notificationsEnabled = res?['notifications_enabled'] ?? true;
+        _notificationSettingLoaded = true;
+      });
+    } catch (e) {
+      // Removed print statement
+    }
   }
 
   Future<void> _toggleNotification() async {
-    final userId = Supabase.instance.client.auth.currentUser?.id;
-    final contactId = widget.contact['id'];
-    if (userId == null || contactId == null) return;
-    final newValue = !_notificationsEnabled;
-    await Supabase.instance.client
-        .from('contacts')
-        .update({'notifications_enabled': newValue})
-        .eq('user_id', userId)
-        .eq('contact_id', contactId);
-    setState(() {
-      _notificationsEnabled = newValue;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          newValue
-              ? 'Notifications enabled for this chat'
-              : 'Notifications disabled for this chat',
+    try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) return;
+      final current = _notificationsEnabled;
+      final newValue = !current;
+      await Supabase.instance.client
+          .from('contacts')
+          .update({'notifications_enabled': newValue})
+          .eq('user_id', userId)
+          .eq('contact_id', widget.contact['id']);
+      setState(() => _notificationsEnabled = newValue);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            newValue
+                ? 'Notifications enabled for this chat'
+                : 'Notifications disabled for this chat',
+          ),
+          backgroundColor: newValue ? const Color(0xFF46C2CB) : Colors.red,
         ),
-        backgroundColor: newValue ? const Color(0xFF46C2CB) : Colors.red,
+      );
+    } catch (e) {
+      // Removed print statement
+    }
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  String _getStatusText() {
+    if (_contactProfile == null) return 'loading...';
+    final isOnline = _contactProfile!['is_online'] == true;
+    if (isOnline) return 'online';
+    final lastSeen = _contactProfile!['last_seen'];
+    if (lastSeen == null) return 'last seen recently';
+    final dt = DateTime.tryParse(lastSeen)?.toLocal();
+    if (dt == null) return 'last seen recently';
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    if (diff.inMinutes < 1) return 'last seen just now';
+    if (diff.inMinutes < 60) return 'last seen ${diff.inMinutes} min ago';
+    if (diff.inHours < 24 && now.day == dt.day) {
+      return 'last seen today at ${DateFormat('HH:mm').format(dt)}';
+    }
+    return 'last seen on ${DateFormat('MMM dd').format(dt)}';
+  }
+
+  void _showContactInfo() {
+    if (_contactProfile == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => UserProfilePage(profile: _contactProfile!),
       ),
     );
   }
@@ -855,9 +722,8 @@ class _PrivateChatState extends State<PrivateChat> {
                             : _MessageBubble(
                                 message: msg,
                                 isMe: isMe,
-                                isDelivered:
-                                    msg['is_delivered'] ?? false, // NEW
-                                isSeen: msg['is_seen'] ?? false, // NEW
+                                isDelivered: msg['is_delivered'] ?? false,
+                                isSeen: msg['is_seen'] ?? false,
                                 onEdit: (m) => setState(() {
                                   _editingMessage = m;
                                   _editController.text = m['content'] ?? '';
@@ -1006,36 +872,30 @@ class _PrivateChatState extends State<PrivateChat> {
       },
     );
   }
-
-  Future<void> _fetchInitialData() async {
-    // Fetch profile and messages concurrently for faster loading.
-    await Future.wait([_fetchContactProfile(), _fetchMessages()]);
-  }
 }
 
-/// A dedicated widget for displaying a single message bubble.
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({
-    required this.message,
-    required this.isMe,
-    this.onEdit,
-    this.onDelete,
-    this.onReply,
-    this.onShowOptions,
-    this.getMessageById,
-    required this.isDelivered,
-    required this.isSeen,
-  });
-
   final Map<String, dynamic> message;
   final bool isMe;
+  final bool isDelivered;
+  final bool isSeen;
   final void Function(Map<String, dynamic> message)? onEdit;
   final void Function(Map<String, dynamic> message)? onDelete;
   final void Function(Map<String, dynamic> message)? onReply;
   final void Function(Map<String, dynamic> message, bool isMe)? onShowOptions;
   final Map<String, dynamic>? Function(String id)? getMessageById;
-  final bool isDelivered;
-  final bool isSeen;
+
+  const _MessageBubble({
+    required this.message,
+    required this.isMe,
+    required this.isDelivered,
+    required this.isSeen,
+    this.onEdit,
+    this.onDelete,
+    this.onReply,
+    this.onShowOptions,
+    this.getMessageById,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1096,7 +956,7 @@ class _MessageBubble extends StatelessWidget {
                   fontSize: 11,
                 ),
               ),
-              if (isMe) // Only show status for messages sent by me
+              if (isMe)
                 _MessageStatusIcons(
                   isDelivered: isDelivered,
                   isSeen: isSeen,
@@ -1110,17 +970,16 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-/// NEW WIDGET: Displays message delivery and seen status icons.
 class _MessageStatusIcons extends StatelessWidget {
+  final bool isDelivered;
+  final bool isSeen;
+  final Color color;
+
   const _MessageStatusIcons({
     required this.isDelivered,
     required this.isSeen,
     required this.color,
   });
-
-  final bool isDelivered;
-  final bool isSeen;
-  final Color color;
 
   @override
   Widget build(BuildContext context) {
@@ -1128,43 +987,26 @@ class _MessageStatusIcons extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         const SizedBox(width: 4),
-        // Show different icons based on status
         if (!isDelivered)
-          // Not sent - show clock icon
           Icon(Icons.access_time, size: 16, color: color)
         else if (isDelivered && !isSeen)
-          // Delivered but not seen - show single checkmark like Telegram
           Icon(Icons.done, size: 16, color: color)
         else if (isDelivered && isSeen)
-          // Seen - show double checkmark with second one in blue
           Row(
             mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.done_all,
-                size: 16,
-                color: const Color.fromARGB(
-                  255,
-                  0,
-                  0,
-                  0,
-                ), // Blue for seen status
-              ),
-            ],
+            children: [Icon(Icons.done_all, size: 16, color: Colors.black)],
           ),
       ],
     );
   }
 }
 
-/// WIDGET THAT IS NOW HEAVILY MODIFIED
 class _MessageContent extends StatelessWidget {
-  const _MessageContent({required this.message, required this.isMe});
-
   final Map<String, dynamic> message;
   final bool isMe;
 
-  /// NEW: Helper method to trigger file download on web.
+  const _MessageContent({required this.message, required this.isMe});
+
   void _downloadFile(String url, String filename) {
     html.AnchorElement(href: url)
       ..setAttribute('download', filename)
@@ -1181,36 +1023,50 @@ class _MessageContent extends StatelessWidget {
     switch (type) {
       case MessageType.text:
         return Text(content, style: TextStyle(color: textColor, fontSize: 16));
-
       case MessageType.image:
         if (mediaUrl == null) return const Text('📷 Image not available');
-        return SizedBox(
-          width: 200, // Fixed width for images
-          height: 200, // Fixed height for images
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.network(
-              mediaUrl,
-              fit: BoxFit.cover,
-              loadingBuilder: (context, child, progress) =>
-                  progress == null ? child : const CircularProgressIndicator(),
-              errorBuilder: (_, __, ___) =>
-                  Icon(Icons.broken_image, color: textColor.withOpacity(0.8)),
+        return Stack(
+          children: [
+            SizedBox(
+              width: 300,
+              height: 450,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  mediaUrl,
+                  fit: BoxFit.cover,
+                  loadingBuilder: (context, child, progress) => progress == null
+                      ? child
+                      : const CircularProgressIndicator(),
+                  errorBuilder: (_, __, ___) => Icon(
+                    Icons.broken_image,
+                    color: textColor.withOpacity(0.8),
+                  ),
+                ),
+              ),
             ),
-          ),
+            Positioned(
+              bottom: 8,
+              right: 8,
+              child: IconButton(
+                icon: const Icon(Icons.download_rounded, color: Colors.white),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: () => _downloadFile(
+                  mediaUrl,
+                  'image.${mediaUrl.split('.').lastOrNull ?? 'jpg'}',
+                ),
+              ),
+            ),
+          ],
         );
-
-      // UPDATED: Voice messages now use the new player widget.
       case MessageType.voice:
         if (mediaUrl == null)
           return const Text('🎤 Voice message not available');
         return _VoiceMessagePlayer(mediaUrl: mediaUrl, isMe: isMe);
-
-      // UPDATED: Other file types are now downloadable.
       case MessageType.video:
       case MessageType.doc:
       case MessageType.music:
-      default:
         final icon = switch (type) {
           MessageType.video => Icons.videocam,
           MessageType.music => Icons.music_note,
@@ -1218,43 +1074,56 @@ class _MessageContent extends StatelessWidget {
         };
         final fallbackFilename =
             'download.${mediaUrl?.split('.').lastOrNull ?? 'dat'}';
-
-        return Row(
-          mainAxisSize: MainAxisSize.min,
+        return Stack(
           children: [
-            Icon(icon, color: textColor.withOpacity(0.8)),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                content.isNotEmpty ? content : 'Attachment',
-                style: TextStyle(color: textColor),
-                overflow: TextOverflow.ellipsis,
+            Container(
+              padding: const EdgeInsets.only(
+                right: 32,
+              ), // Space for download icon
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, color: textColor.withOpacity(0.8)),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      content.isNotEmpty ? content : 'Attachment',
+                      style: TextStyle(color: textColor),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(width: 8),
-            // NEW: Download button
-            IconButton(
-              icon: Icon(Icons.download_rounded, color: textColor),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              onPressed: mediaUrl == null
-                  ? null
-                  : () => _downloadFile(
-                      mediaUrl,
-                      content.isNotEmpty ? content : fallbackFilename,
-                    ),
-            ),
+            if (mediaUrl != null)
+              Positioned(
+                bottom: 0,
+                right: 0,
+                child: IconButton(
+                  icon: Icon(
+                    Icons.download_rounded,
+                    color: textColor,
+                    size: 20,
+                  ),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  onPressed: () => _downloadFile(
+                    mediaUrl,
+                    content.isNotEmpty ? content : fallbackFilename,
+                  ),
+                ),
+              ),
           ],
         );
     }
   }
 }
 
-/// NEW WIDGET: A stateful widget to manage the audio player for a single voice message.
 class _VoiceMessagePlayer extends StatefulWidget {
-  const _VoiceMessagePlayer({required this.mediaUrl, required this.isMe});
   final String mediaUrl;
   final bool isMe;
+
+  const _VoiceMessagePlayer({required this.mediaUrl, required this.isMe});
 
   @override
   State<_VoiceMessagePlayer> createState() => _VoiceMessagePlayerState();
@@ -1274,56 +1143,29 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
   @override
   void initState() {
     super.initState();
-
-    // Listen to player state changes.
+    _audioPlayer.setSourceUrl(widget.mediaUrl);
     _playerStateChangeSubscription = _audioPlayer.onPlayerStateChanged.listen((
       state,
     ) {
-      if (mounted) {
-        setState(() {
-          _isPlaying = state == PlayerState.playing;
-        });
-      }
+      if (mounted) setState(() => _isPlaying = state == PlayerState.playing);
     });
-
-    // Listen to audio duration changes.
     _durationSubscription = _audioPlayer.onDurationChanged.listen((
       newDuration,
     ) {
-      if (mounted) {
-        setState(() {
-          _duration = newDuration;
-        });
-      }
+      if (mounted) setState(() => _duration = newDuration);
     });
-
-    // Listen to audio position changes.
     _positionSubscription = _audioPlayer.onPositionChanged.listen((
       newPosition,
     ) {
-      if (mounted) {
-        setState(() {
-          _position = newPosition;
-        });
-      }
+      if (mounted) setState(() => _position = newPosition);
     });
-
-    // Reset position when audio completes.
     _playerCompleteSubscription = _audioPlayer.onPlayerComplete.listen((event) {
-      if (mounted) {
-        setState(() {
-          _position = Duration.zero;
-        });
-      }
+      if (mounted) setState(() => _position = Duration.zero);
     });
-
-    // Set the audio source once initially. This helps fetch the duration.
-    _audioPlayer.setSourceUrl(widget.mediaUrl);
   }
 
   @override
   void dispose() {
-    // Cancel all subscriptions and release the player.
     _durationSubscription?.cancel();
     _positionSubscription?.cancel();
     _playerCompleteSubscription?.cancel();
@@ -1332,88 +1174,91 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
     super.dispose();
   }
 
-  // Helper to format duration to a MM:SS string.
   String _formatDuration(Duration d) {
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '$minutes:$seconds';
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final color = widget.isMe ? Colors.white : const Color(0xFF6D5BFF);
-    final inactiveColor = widget.isMe
-        ? Colors.white.withOpacity(0.7)
-        : Colors.grey.shade400;
+@override
+Widget build(BuildContext context) {
+  final color = widget.isMe ? Colors.white : const Color(0xFF6D5BFF);
+  final inactiveColor = widget.isMe ? Colors.white.withOpacity(0.7) : Colors.grey.shade400;
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
-          onPressed: () async {
-            if (_isPlaying) {
-              await _audioPlayer.pause();
-            } else {
-              // If position is at the end, seek to start before playing.
-              if (_position >= _duration && _duration > Duration.zero) {
-                await _audioPlayer.seek(Duration.zero);
-              }
-              await _audioPlayer.play(UrlSource(widget.mediaUrl));
-            }
-          },
-          icon: Icon(
-            _isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-            color: color,
-            size: 32,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (_duration > Duration.zero)
-                Slider(
-                  value: _position.inSeconds.toDouble(),
-                  max: _duration.inSeconds.toDouble(),
-                  onChanged: (value) async {
-                    final position = Duration(seconds: value.toInt());
-                    await _audioPlayer.seek(position);
+  return Stack(
+    children: [
+      Container(
+        padding: const EdgeInsets.only(right: 32), // Space for download icon
+        constraints: const BoxConstraints(maxWidth: 200), // Limit width
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  onPressed: () async {
+                    if (_isPlaying) {
+                      await _audioPlayer.pause();
+                    } else {
+                      if (_position >= _duration && _duration > Duration.zero) {
+                        await _audioPlayer.seek(Duration.zero);
+                      }
+                      await _audioPlayer.play(UrlSource(widget.mediaUrl));
+                    }
                   },
-                  activeColor: color,
-                  inactiveColor: inactiveColor,
+                  icon: Icon(_isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled, color: color, size: 32),
                 ),
+                const SizedBox(width: 8),
+                if (_duration > Duration.zero)
+                  Flexible(
+                    child: Slider(
+                      value: _position.inSeconds.toDouble(),
+                      max: _duration.inSeconds.toDouble(),
+                      onChanged: (value) async {
+                        final position = Duration(seconds: value.toInt());
+                        await _audioPlayer.seek(position);
+                      },
+                      activeColor: color,
+                      inactiveColor: inactiveColor,
+                    ),
+                  ),
+              ],
+            ),
+            if (_duration > Duration.zero)
               Text(
                 '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
                 style: TextStyle(fontSize: 12, color: color.withOpacity(0.9)),
               ),
-            ],
-          ),
+          ],
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
+}
 }
 
-// Add the _EditMessageInput widget:
 class _EditMessageInput extends StatefulWidget {
   final String initialText;
   final VoidCallback onCancel;
   final ValueChanged<String> onSave;
+
   const _EditMessageInput({
     required this.initialText,
     required this.onCancel,
     required this.onSave,
   });
+
   @override
   State<_EditMessageInput> createState() => _EditMessageInputState();
 }
 
 class _EditMessageInputState extends State<_EditMessageInput> {
   late TextEditingController _controller;
+
   @override
   void initState() {
     super.initState();
@@ -1475,7 +1320,9 @@ class _EditMessageInputState extends State<_EditMessageInput> {
 class _ReplyBubblePreview extends StatelessWidget {
   final Map<String, dynamic>? repliedMessage;
   final bool isMe;
+
   const _ReplyBubblePreview({required this.repliedMessage, required this.isMe});
+
   @override
   Widget build(BuildContext context) {
     if (repliedMessage == null) {
@@ -1535,11 +1382,13 @@ class _ReplyPreview extends StatelessWidget {
   final Map<String, dynamic> message;
   final VoidCallback onCancel;
   final Map<String, dynamic>? Function(String id) getMessageById;
+
   const _ReplyPreview({
     required this.message,
     required this.onCancel,
     required this.getMessageById,
   });
+
   @override
   Widget build(BuildContext context) {
     final content = message['content'] ?? '';

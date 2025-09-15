@@ -27,12 +27,14 @@ class _GroupChatPageState extends State<GroupChatPage> {
   String? _groupId;
   bool _sending = false;
   RealtimeChannel? _messagesSub;
+  // RealtimeChannel? _profilesSub;
 
   @override
   void initState() {
     super.initState();
     _fetchGroupData();
     _subscribeToMessages();
+    // _subscribeToProfiles();
   }
 
   @override
@@ -40,6 +42,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
     _messageController.dispose();
     _scrollController.dispose();
     _messagesSub?.unsubscribe();
+    // _profilesSub?.unsubscribe();
     super.dispose();
   }
 
@@ -84,25 +87,24 @@ class _GroupChatPageState extends State<GroupChatPage> {
     final user = Supabase.instance.client.auth.currentUser!;
 
     // Create the group
-    final groupResponse =
-        await Supabase.instance.client
-            .from('groups')
-            .insert({
-              'name': widget.group['name'],
-              'bio': widget.group['bio'],
-              'is_public': widget.group['is_public'],
-              'invite_link': widget.group['invite_link'],
-              'avatar_url': widget.group['avatar_url'],
-              'creator_id': user.id,
-              'can_send_message': true,
-              'can_send_media': true,
-              'can_add_members': true,
-              'can_pin_message': true,
-              'can_change_info': true,
-              'can_delete_message': false,
-            })
-            .select()
-            .single();
+    final groupResponse = await Supabase.instance.client
+        .from('groups')
+        .insert({
+          'name': widget.group['name'],
+          'bio': widget.group['bio'],
+          'is_public': widget.group['is_public'],
+          'invite_link': widget.group['invite_link'],
+          'avatar_url': widget.group['avatar_url'],
+          'creator_id': user.id,
+          'can_send_message': true,
+          'can_send_media': true,
+          'can_add_members': true,
+          'can_pin_message': true,
+          'can_change_info': true,
+          'can_delete_message': false,
+        })
+        .select()
+        .single();
 
     _groupId = groupResponse['id'];
     _groupInfo = groupResponse;
@@ -117,12 +119,11 @@ class _GroupChatPageState extends State<GroupChatPage> {
   }
 
   Future<void> _fetchExistingGroup() async {
-    final response =
-        await Supabase.instance.client
-            .from('groups')
-            .select()
-            .eq('id', _groupId)
-            .single();
+    final response = await Supabase.instance.client
+        .from('groups')
+        .select()
+        .eq('id', _groupId)
+        .single();
 
     _groupInfo = response;
   }
@@ -146,35 +147,34 @@ class _GroupChatPageState extends State<GroupChatPage> {
           .eq('group_id', _groupId);
 
       setState(() {
-        _members =
-            (response as List).map((member) {
-              final profile = member['profiles'] as Map<String, dynamic>;
-              final role = member['role'] as int? ?? 0;
+        _members = (response as List).map((member) {
+          final profile = member['profiles'] as Map<String, dynamic>;
+          final role = member['role'] as int? ?? 0;
 
-              String roleText = '';
-              switch (role) {
-                case 0:
-                  roleText = 'Member';
-                  break;
-                case 1:
-                  roleText = 'Admin';
-                  break;
-                case 2:
-                  roleText = 'Owner';
-                  break;
-              }
+          String roleText = '';
+          switch (role) {
+            case 0:
+              roleText = 'Member';
+              break;
+            case 1:
+              roleText = 'Admin';
+              break;
+            case 2:
+              roleText = 'Owner';
+              break;
+          }
 
-              return {
-                'user_id': member['user_id'],
-                'role': role,
-                'role_text': roleText,
-                'joined_at': member['joined_at'],
-                'name': profile['name'] ?? profile['username'] ?? 'Unknown',
-                'username': profile['username'],
-                'avatar_url': profile['avatar_url'],
-                'bio': profile['bio'],
-              };
-            }).toList();
+          return {
+            'user_id': member['user_id'],
+            'role': role,
+            'role_text': roleText,
+            'joined_at': member['joined_at'],
+            'name': profile['name'] ?? profile['username'] ?? 'Unknown',
+            'username': profile['username'],
+            'avatar_url': profile['avatar_url'],
+            'bio': profile['bio'],
+          };
+        }).toList();
       });
     } catch (e) {
       print('Error fetching members: $e');
@@ -211,19 +211,18 @@ class _GroupChatPageState extends State<GroupChatPage> {
 
       if (mounted) {
         setState(() {
-          _messages =
-              List<Map<String, dynamic>>.from(messages).map((message) {
-                final profile = message['profiles'] as Map<String, dynamic>;
-                return {
-                  ...message,
-                  'sender': {
-                    'id': profile['id'],
-                    'name': profile['name'] ?? profile['username'] ?? 'Unknown',
-                    'username': profile['username'],
-                    'avatar_url': profile['avatar_url'],
-                  },
-                };
-              }).toList();
+          _messages = List<Map<String, dynamic>>.from(messages).map((message) {
+            final profile = message['profiles'] as Map<String, dynamic>;
+            return {
+              ...message,
+              'sender': {
+                'id': profile['id'],
+                'name': profile['name'] ?? profile['username'] ?? 'Unknown',
+                'username': profile['username'],
+                'avatar_url': profile['avatar_url'],
+              },
+            };
+          }).toList();
         });
         _scrollToBottom();
       }
@@ -485,20 +484,19 @@ class _GroupChatPageState extends State<GroupChatPage> {
       await showDialog(
         context: context,
         barrierDismissible: false,
-        builder:
-            (context) => AlertDialog(
-              title: const Text('Recording...'),
-              content: const Icon(Icons.mic, size: 48, color: Colors.red),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    mediaRecorder.stop(); // This triggers the 'stop' event
-                    Navigator.of(context).pop();
-                  },
-                  child: const Text('Stop'),
-                ),
-              ],
+        builder: (context) => AlertDialog(
+          title: const Text('Recording...'),
+          content: const Icon(Icons.mic, size: 48, color: Colors.red),
+          actions: [
+            TextButton(
+              onPressed: () {
+                mediaRecorder.stop(); // This triggers the 'stop' event
+                Navigator.of(context).pop();
+              },
+              child: const Text('Stop'),
             ),
+          ],
+        ),
       );
 
       await completer.future;
@@ -555,41 +553,72 @@ class _GroupChatPageState extends State<GroupChatPage> {
     });
   }
 
-  void _subscribeToMessages() {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null || _groupId == null) return;
-    final channelName = 'group-chat-$_groupId';
-    _messagesSub = Supabase.instance.client.channel(channelName).on(
-      RealtimeListenTypes.postgresChanges,
-      ChannelFilter(event: 'INSERT', schema: 'public', table: 'messages'),
-      (payload, [ref]) {
-        final newMessage = payload['new'] as Map<String, dynamic>;
-        if (newMessage['group_id'] == _groupId && mounted) {
-          setState(() {
-            if (!_messages.any((msg) => msg['id'] == newMessage['id'])) {
-              // Add sender info for UI
-              _messages.add({
-                ...newMessage,
-                'sender': {
-                  'id': newMessage['sender_id'],
-                  'name': '', // Optionally fetch name/avatar if needed
-                  'username': '',
-                  'avatar_url': '',
-                },
-              });
-              _messages.sort(
-                (a, b) => DateTime.parse(
-                  a['created_at'],
-                ).compareTo(DateTime.parse(b['created_at'])),
-              );
-            }
-          });
-          _scrollToBottom();
-        }
-      },
-    );
-    _messagesSub?.subscribe();
-  }
+void _subscribeToMessages() {
+  final user = Supabase.instance.client.auth.currentUser;
+  if (user == null || _groupId == null) return;
+  final channelName = 'group-chat-$_groupId';
+  _messagesSub = Supabase.instance.client.channel(channelName).on(
+    RealtimeListenTypes.postgresChanges,
+    ChannelFilter(event: 'INSERT', schema: 'public', table: 'messages'),
+    (payload, [ref]) {
+      final newMessage = payload['new'] as Map<String, dynamic>;
+      if (newMessage['group_id'] == _groupId && mounted) {
+        // Use .then() instead of await
+        Supabase.instance.client
+            .from('profiles')
+            .select('name, username, avatar_url')
+            .eq('id', newMessage['sender_id'])
+            .maybeSingle()
+            .then((profile) {
+          if (mounted) {
+            setState(() {
+              if (!_messages.any((msg) => msg['id'] == newMessage['id'])) {
+                _messages.add({
+                  ...newMessage,
+                  'sender': {
+                    'id': newMessage['sender_id'],
+                    'name': profile?['name'] ?? '',
+                    'username': profile?['username'] ?? '',
+                    'avatar_url': profile?['avatar_url'] ?? '',
+                  },
+                });
+                _messages.sort((a, b) => DateTime.parse(a['created_at']).compareTo(DateTime.parse(b['created_at'])));
+              }
+            });
+            _scrollToBottom();
+          }
+        });
+      }
+    },
+  );
+  _messagesSub?.subscribe();
+}
+
+
+  // void _subscribeToProfiles() {
+  //   _profilesSub = Supabase.instance.client.channel('profiles-channel').on(
+  //     RealtimeListenTypes.postgresChanges,
+  //     ChannelFilter(event: 'UPDATE', schema: 'public', table: 'profiles'),
+  //     (payload, [ref]) {
+  //       final updatedProfile = payload['new'] as Map<String, dynamic>;
+  //       if (mounted) {
+  //         setState(() {
+  //           for (var i = 0; i < _messages.length; i++) {
+  //             if (_messages[i]['sender']['id'] == updatedProfile['id']) {
+  //               _messages[i]['sender'] = {
+  //                 ..._messages[i]['sender'],
+  //                 'name': updatedProfile['name'],
+  //                 'username': updatedProfile['username'],
+  //                 'avatar_url': updatedProfile['avatar_url'],
+  //               };
+  //             }
+  //           }
+  //         });
+  //       }
+  //     },
+  //   );
+  //   _profilesSub?.subscribe();
+  // }
 
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
@@ -656,16 +685,11 @@ class _GroupChatPageState extends State<GroupChatPage> {
                 backgroundColor: const Color(0xFF46C2CB),
                 backgroundImage:
                     groupAvatarUrl != null && groupAvatarUrl.isNotEmpty
-                        ? NetworkImage(groupAvatarUrl)
-                        : null,
-                child:
-                    (groupAvatarUrl == null || groupAvatarUrl.isEmpty)
-                        ? const Icon(
-                          Icons.groups,
-                          color: Colors.white,
-                          size: 20,
-                        )
-                        : null,
+                    ? NetworkImage(groupAvatarUrl)
+                    : null,
+                child: (groupAvatarUrl == null || groupAvatarUrl.isEmpty)
+                    ? const Icon(Icons.groups, color: Colors.white, size: 20)
+                    : null,
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -713,81 +737,75 @@ class _GroupChatPageState extends State<GroupChatPage> {
                   // Admin or Owner: show delete group dialog
                   showDialog(
                     context: context,
-                    builder:
-                        (context) => AlertDialog(
-                          title: const Text('Leave and Delete Group'),
-                          content: const Text(
-                            'As the owner, leaving will delete the group for everyone. Are you sure you want to continue?',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.of(context).pop(),
-                              child: const Text('Cancel'),
-                            ),
-                            TextButton(
-                              onPressed: _deleteGroup,
-                              child: const Text(
-                                'Delete Group',
-                                style: TextStyle(color: Colors.red),
-                              ),
-                            ),
-                          ],
+                    builder: (context) => AlertDialog(
+                      title: const Text('Leave and Delete Group'),
+                      content: const Text(
+                        'As the owner, leaving will delete the group for everyone. Are you sure you want to continue?',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('Cancel'),
                         ),
+                        TextButton(
+                          onPressed: _deleteGroup,
+                          child: const Text(
+                            'Delete Group',
+                            style: TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    ),
                   );
                 } else {
                   // Regular member: show leave dialog
                   showDialog(
                     context: context,
-                    builder:
-                        (context) => AlertDialog(
-                          title: const Text('Leave Group'),
-                          content: const Text(
-                            'Are you sure you want to leave this group?',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.of(context).pop(),
-                              child: const Text('Cancel'),
-                            ),
-                            TextButton(
-                              onPressed: _leaveGroup,
-                              child: const Text(
-                                'Leave',
-                                style: TextStyle(color: Colors.red),
-                              ),
-                            ),
-                          ],
+                    builder: (context) => AlertDialog(
+                      title: const Text('Leave Group'),
+                      content: const Text(
+                        'Are you sure you want to leave this group?',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('Cancel'),
                         ),
+                        TextButton(
+                          onPressed: _leaveGroup,
+                          child: const Text(
+                            'Leave',
+                            style: TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    ),
                   );
                 }
               }
             },
-            itemBuilder:
-                (context) => [
-                  PopupMenuItem(
-                    value: 'search',
-                    child: Row(
-                      children: const [
-                        Icon(Icons.search, color: Colors.black87),
-                        SizedBox(width: 8),
-                        Text('Search'),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'leave',
-                    child: Row(
-                      children: const [
-                        Icon(Icons.exit_to_app, color: Colors.red),
-                        SizedBox(width: 8),
-                        Text(
-                          'Leave Group',
-                          style: TextStyle(color: Colors.red),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'search',
+                child: Row(
+                  children: const [
+                    Icon(Icons.search, color: Colors.black87),
+                    SizedBox(width: 8),
+                    Text('Search'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'leave',
+                child: Row(
+                  children: const [
+                    Icon(Icons.exit_to_app, color: Colors.red),
+                    SizedBox(width: 8),
+                    Text('Leave Group', style: TextStyle(color: Colors.red)),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -796,25 +814,23 @@ class _GroupChatPageState extends State<GroupChatPage> {
         child: Column(
           children: [
             Expanded(
-              child:
-                  _isLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : ListView.builder(
-                        controller: _scrollController,
-                        itemCount: _messages.length,
-                        padding: const EdgeInsets.all(12),
-                        itemBuilder: (context, i) {
-                          final msg = _messages[i];
-                          final user =
-                              Supabase.instance.client.auth.currentUser;
-                          final isMe = msg['sender']?['id'] == user?.id;
-                          return _GroupMessageBubble(
-                            message: msg,
-                            isMe: isMe,
-                            members: _members,
-                          );
-                        },
-                      ),
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : ListView.builder(
+                      controller: _scrollController,
+                      itemCount: _messages.length,
+                      padding: const EdgeInsets.all(12),
+                      itemBuilder: (context, i) {
+                        final msg = _messages[i];
+                        final user = Supabase.instance.client.auth.currentUser;
+                        final isMe = msg['sender']?['id'] == user?.id;
+                        return _GroupMessageBubble(
+                          message: msg,
+                          isMe: isMe,
+                          members: _members,
+                        );
+                      },
+                    ),
             ),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -854,25 +870,23 @@ class _GroupChatPageState extends State<GroupChatPage> {
                         Icons.mic,
                         color: kIsWeb ? const Color(0xFF6D5BFF) : Colors.grey,
                       ),
-                      onPressed:
-                          _sending || !kIsWeb ? null : _handleRecordVoice,
-                      tooltip:
-                          kIsWeb ? 'Record voice' : 'Voice recording web-only',
+                      onPressed: _sending || !kIsWeb
+                          ? null
+                          : _handleRecordVoice,
+                      tooltip: kIsWeb
+                          ? 'Record voice'
+                          : 'Voice recording web-only',
                     ),
                     IconButton(
-                      icon:
-                          _sending
-                              ? const SizedBox(
-                                width: 24,
-                                height: 24,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.5,
-                                ),
-                              )
-                              : const Icon(
-                                Icons.send,
-                                color: Color(0xFF6D5BFF),
+                      icon: _sending
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
                               ),
+                            )
+                          : const Icon(Icons.send, color: Color(0xFF6D5BFF)),
                       onPressed: _sending ? null : _sendMessage,
                     ),
                   ],
@@ -947,8 +961,9 @@ class _GroupMessageBubble extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment:
-            isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment: isMe
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
         children: [
           if (!isMe)
             Padding(
@@ -956,20 +971,20 @@ class _GroupMessageBubble extends StatelessWidget {
               child: CircleAvatar(
                 radius: 18,
                 backgroundColor: const Color(0xFF46C2CB),
-                backgroundImage:
-                    senderAvatar.isNotEmpty ? NetworkImage(senderAvatar) : null,
-                child:
-                    senderAvatar.isEmpty
-                        ? Text(
-                          senderName.isNotEmpty
-                              ? senderName.substring(0, 1).toUpperCase()
-                              : '?',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        )
-                        : null,
+                backgroundImage: senderAvatar.isNotEmpty
+                    ? NetworkImage(senderAvatar)
+                    : null,
+                child: senderAvatar.isEmpty
+                    ? Text(
+                        senderName.isNotEmpty
+                            ? senderName.substring(0, 1).toUpperCase()
+                            : '?',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      )
+                    : null,
               ),
             ),
           Container(
@@ -979,14 +994,13 @@ class _GroupMessageBubble extends StatelessWidget {
               maxWidth: MediaQuery.of(context).size.width * 0.75,
             ),
             decoration: BoxDecoration(
-              gradient:
-                  isMe
-                      ? const LinearGradient(
-                        colors: [Color(0xFF6D5BFF), Color(0xFF46C2CB)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      )
-                      : null,
+              gradient: isMe
+                  ? const LinearGradient(
+                      colors: [Color(0xFF6D5BFF), Color(0xFF46C2CB)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    )
+                  : null,
               color: isMe ? null : Colors.white,
               borderRadius: BorderRadius.only(
                 topLeft: const Radius.circular(20),
@@ -1003,8 +1017,9 @@ class _GroupMessageBubble extends StatelessWidget {
               ],
             ),
             child: Column(
-              crossAxisAlignment:
-                  isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              crossAxisAlignment: isMe
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
                 nameRow,
@@ -1013,9 +1028,9 @@ class _GroupMessageBubble extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   message['created_at'] != null
-                      ? DateFormat(
-                        'HH:mm',
-                      ).format(DateTime.parse(message['created_at']).toLocal())
+                      ? DateFormat('HH:mm').format(
+                          DateTime.parse(message['created_at']).toLocal(),
+                        )
                       : '',
                   style: TextStyle(
                     color: isMe ? Colors.white70 : Colors.black38,
@@ -1061,14 +1076,10 @@ class _GroupMessageContent extends StatelessWidget {
           child: Image.network(
             mediaUrl,
             fit: BoxFit.cover,
-            loadingBuilder:
-                (context, child, progress) =>
-                    progress == null
-                        ? child
-                        : const CircularProgressIndicator(),
-            errorBuilder:
-                (_, __, ___) =>
-                    Icon(Icons.broken_image, color: textColor.withOpacity(0.8)),
+            loadingBuilder: (context, child, progress) =>
+                progress == null ? child : const CircularProgressIndicator(),
+            errorBuilder: (_, __, ___) =>
+                Icon(Icons.broken_image, color: textColor.withOpacity(0.8)),
           ),
         );
 
@@ -1106,13 +1117,12 @@ class _GroupMessageContent extends StatelessWidget {
               icon: Icon(Icons.download_rounded, color: textColor),
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(),
-              onPressed:
-                  mediaUrl == null
-                      ? null
-                      : () => _downloadFile(
-                        mediaUrl,
-                        content.isNotEmpty ? content : fallbackFilename,
-                      ),
+              onPressed: mediaUrl == null
+                  ? null
+                  : () => _downloadFile(
+                      mediaUrl,
+                      content.isNotEmpty ? content : fallbackFilename,
+                    ),
             ),
           ],
         );
@@ -1228,8 +1238,9 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
   @override
   Widget build(BuildContext context) {
     final color = widget.isMe ? Colors.white : const Color(0xFF6D5BFF);
-    final inactiveColor =
-        widget.isMe ? Colors.white.withOpacity(0.7) : Colors.grey.shade400;
+    final inactiveColor = widget.isMe
+        ? Colors.white.withOpacity(0.7)
+        : Colors.grey.shade400;
 
     return Row(
       mainAxisSize: MainAxisSize.min,
