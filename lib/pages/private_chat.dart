@@ -1028,8 +1028,8 @@ class _MessageContent extends StatelessWidget {
         return Stack(
           children: [
             SizedBox(
-              width: 200,
-              height: 200,
+              width: 300,
+              height: 450,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: Image.network(
