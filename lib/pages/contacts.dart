@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'private_chat.dart';
+import 'private_chat/private_chat.dart';
 
 class Contacts extends StatefulWidget {
   const Contacts({super.key});
