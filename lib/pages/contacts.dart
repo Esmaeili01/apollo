@@ -10,7 +10,6 @@ class Contacts extends StatefulWidget {
 }
 
 class _ContactsState extends State<Contacts> {
-  final TextEditingController _usernameController = TextEditingController();
   bool _isLoading = false;
   String? _error;
   String? _dialogError;
@@ -119,7 +118,6 @@ class _ContactsState extends State<Contacts> {
                         final c = _contacts[i];
                         final avatarUrl = c['avatar_url'] as String?;
                         final name = c['name'] as String? ?? '';
-                        final bio = c['bio'] as String? ?? '';
                         final lastSeen = c['last_seen'];
                         return GestureDetector(
                           onTap: () {
@@ -237,7 +235,6 @@ class _ContactsState extends State<Contacts> {
 
   void _showAddContactDialog(BuildContext context) {
     final usernameController = TextEditingController();
-    final nicknameController = TextEditingController();
     _dialogError = null;
     showDialog(
       context: context,
@@ -297,30 +294,6 @@ class _ContactsState extends State<Contacts> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    // TextField(
-                    //   controller: nicknameController,
-                    //   decoration: const InputDecoration(
-                    //     labelText: 'Nickname',
-                    //     border: OutlineInputBorder(
-                    //       borderRadius: BorderRadius.all(Radius.circular(16)),
-                    //     ),
-                    //     enabledBorder: OutlineInputBorder(
-                    //       borderRadius: BorderRadius.all(Radius.circular(16)),
-                    //       borderSide: BorderSide(
-                    //         color: Color(0xFF6D5BFF),
-                    //         width: 1.5,
-                    //       ),
-                    //     ),
-                    //     focusedBorder: OutlineInputBorder(
-                    //       borderRadius: BorderRadius.all(Radius.circular(16)),
-                    //       borderSide: BorderSide(
-                    //         color: Color(0xFF46C2CB),
-                    //         width: 2,
-                    //       ),
-                    //     ),
-                    //   ),
-                    // ),
                   ],
                 ),
               ),
