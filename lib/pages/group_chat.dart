@@ -9,6 +9,9 @@ import 'package:audioplayers/audioplayers.dart';
 import 'dart:async';
 import 'package:intl/intl.dart';
 
+// Global variable to track current open group chat
+String? currentOpenGroupChatId;
+
 class GroupChatPage extends StatefulWidget {
   final Map<String, dynamic> group;
   const GroupChatPage({required this.group, Key? key}) : super(key: key);
@@ -32,13 +35,18 @@ class _GroupChatPageState extends State<GroupChatPage> {
   @override
   void initState() {
     super.initState();
-    _fetchGroupData();
-    _subscribeToMessages();
-    // _subscribeToProfiles();
+    _fetchGroupData().then((_) {
+      if (mounted && _groupId != null) {
+        currentOpenGroupChatId = _groupId;
+        _subscribeToMessages();  // Move subscription here after group ID is set
+        // _subscribeToProfiles();
+      }
+    });
   }
 
   @override
   void dispose() {
+    currentOpenGroupChatId = null;
     _messageController.dispose();
     _scrollController.dispose();
     _messagesSub?.unsubscribe();
@@ -184,6 +192,38 @@ class _GroupChatPageState extends State<GroupChatPage> {
     }
   }
 
+  Future<void> _markMessageAsSeen(String messageId) async {
+    try {
+      await Supabase.instance.client
+          .from('messages')
+          .update({
+            'is_seen': true,
+            'last_seen': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', messageId);
+    } catch (e) {
+      // Handle error silently like in private chat
+    }
+  }
+
+  Future<void> _markReceivedMessagesAsSeen() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null || _groupId == null) return;
+    try {
+      await Supabase.instance.client
+          .from('messages')
+          .update({
+            'is_seen': true,
+            'last_seen': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('group_id', _groupId)
+          .neq('sender_id', user.id)  // Don't mark own messages as seen
+          .eq('is_seen', false);
+    } catch (e) {
+      // Handle error silently like in private chat
+    }
+  }
+
   Future<void> _fetchMessages() async {
     if (mounted) setState(() => _isLoading = true);
     try {
@@ -199,6 +239,9 @@ class _GroupChatPageState extends State<GroupChatPage> {
             created_at,
             type,
             media_url,
+            sender_id,
+            is_delivered,
+            is_seen,
             profiles!messages_sender_id_fkey(
               id,
               name,
@@ -213,7 +256,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
         setState(() {
           _messages = List<Map<String, dynamic>>.from(messages).map((message) {
             final profile = message['profiles'] as Map<String, dynamic>;
-            return {
+            final processedMessage = {
               ...message,
               'sender': {
                 'id': profile['id'],
@@ -222,9 +265,11 @@ class _GroupChatPageState extends State<GroupChatPage> {
                 'avatar_url': profile['avatar_url'],
               },
             };
+            return processedMessage;
           }).toList();
         });
         _scrollToBottom();
+        _markReceivedMessagesAsSeen();
       }
     } catch (e) {
       print('Error fetching messages: $e');
@@ -427,6 +472,8 @@ class _GroupChatPageState extends State<GroupChatPage> {
         'type': type,
         'is_multimedia': true,
         'media_url': urls,
+        'is_delivered': true,
+        'is_seen': false,
       });
     } catch (e) {
       print('Error sending multimedia message: $e');
@@ -557,40 +604,67 @@ void _subscribeToMessages() {
   final user = Supabase.instance.client.auth.currentUser;
   if (user == null || _groupId == null) return;
   final channelName = 'group-chat-$_groupId';
-  _messagesSub = Supabase.instance.client.channel(channelName).on(
-    RealtimeListenTypes.postgresChanges,
-    ChannelFilter(event: 'INSERT', schema: 'public', table: 'messages'),
-    (payload, [ref]) {
-      final newMessage = payload['new'] as Map<String, dynamic>;
-      if (newMessage['group_id'] == _groupId && mounted) {
-        // Use .then() instead of await
-        Supabase.instance.client
-            .from('profiles')
-            .select('name, username, avatar_url')
-            .eq('id', newMessage['sender_id'])
-            .maybeSingle()
-            .then((profile) {
-          if (mounted) {
-            setState(() {
-              if (!_messages.any((msg) => msg['id'] == newMessage['id'])) {
-                _messages.add({
-                  ...newMessage,
-                  'sender': {
-                    'id': newMessage['sender_id'],
-                    'name': profile?['name'] ?? '',
-                    'username': profile?['username'] ?? '',
-                    'avatar_url': profile?['avatar_url'] ?? '',
-                  },
-                });
-                _messages.sort((a, b) => DateTime.parse(a['created_at']).compareTo(DateTime.parse(b['created_at'])));
-              }
-            });
-            _scrollToBottom();
+  _messagesSub = Supabase.instance.client.channel(channelName)
+    ..on(
+      RealtimeListenTypes.postgresChanges,
+      ChannelFilter(event: 'INSERT', schema: 'public', table: 'messages'),
+      (payload, [ref]) {
+        final newMessage = payload['new'] as Map<String, dynamic>;
+        if (newMessage['group_id'] == _groupId && mounted) {
+          // Use .then() instead of await
+          Supabase.instance.client
+              .from('profiles')
+              .select('name, username, avatar_url')
+              .eq('id', newMessage['sender_id'])
+              .maybeSingle()
+              .then((profile) {
+            if (mounted) {
+              setState(() {
+                if (!_messages.any((msg) => msg['id'] == newMessage['id'])) {
+                  _messages.add({
+                    ...newMessage,
+                    'sender': {
+                      'id': newMessage['sender_id'],
+                      'name': profile?['name'] ?? '',
+                      'username': profile?['username'] ?? '',
+                      'avatar_url': profile?['avatar_url'] ?? '',
+                    },
+                  });
+                  _messages.sort((a, b) => DateTime.parse(a['created_at']).compareTo(DateTime.parse(b['created_at'])));
+                }
+              });
+              _scrollToBottom();
+            }
+          });
+          // Mark message as seen if it's not from current user
+          final isMine = newMessage['sender_id'] == user.id;
+          if (!isMine) {
+            _markMessageAsSeen(newMessage['id']);
           }
-        });
-      }
-    },
-  );
+        }
+      },
+    )
+    ..on(
+      RealtimeListenTypes.postgresChanges,
+      ChannelFilter(event: 'UPDATE', schema: 'public', table: 'messages'),
+      (payload, [ref]) {
+        final updatedMessage = payload['new'] as Map<String, dynamic>;
+        if (updatedMessage['group_id'] == _groupId && mounted) {
+          setState(() {
+            final idx = _messages.indexWhere(
+              (msg) => msg['id'] == updatedMessage['id'],
+            );
+            if (idx != -1) {
+              // Update the message while preserving the sender info
+              _messages[idx] = {
+                ...updatedMessage,
+                'sender': _messages[idx]['sender'], // Preserve existing sender info
+              };
+            }
+          });
+        }
+      },
+    );
   _messagesSub?.subscribe();
 }
 
@@ -638,6 +712,8 @@ void _subscribeToMessages() {
         'sender_id': user.id,
         'content': text,
         'type': MessageType.text.name,
+        'is_delivered': true,
+        'is_seen': false,
       });
     } catch (e) {
       print('Error sending message: $e');
@@ -828,6 +904,8 @@ void _subscribeToMessages() {
                           message: msg,
                           isMe: isMe,
                           members: _members,
+                          isDelivered: msg['is_delivered'] ?? false,
+                          isSeen: msg['is_seen'] ?? false,
                         );
                       },
                     ),
@@ -900,15 +978,50 @@ void _subscribeToMessages() {
   }
 }
 
+class _MessageStatusIcons extends StatelessWidget {
+  final bool isDelivered;
+  final bool isSeen;
+  final Color color;
+
+  const _MessageStatusIcons({
+    required this.isDelivered,
+    required this.isSeen,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(width: 4),
+        if (!isDelivered)
+          Icon(Icons.access_time, size: 16, color: color)
+        else if (isDelivered && !isSeen)
+          Icon(Icons.done, size: 16, color: color)
+        else if (isDelivered && isSeen)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [Icon(Icons.done_all, size: 16, color: Colors.black)],
+          ),
+      ],
+    );
+  }
+}
+
 class _GroupMessageBubble extends StatelessWidget {
   final Map<String, dynamic> message;
   final bool isMe;
   final List<Map<String, dynamic>> members;
+  final bool isDelivered;
+  final bool isSeen;
 
   const _GroupMessageBubble({
     required this.message,
     required this.isMe,
     required this.members,
+    required this.isDelivered,
+    required this.isSeen,
   });
 
   @override
@@ -1037,6 +1150,12 @@ class _GroupMessageBubble extends StatelessWidget {
                     fontSize: 11,
                   ),
                 ),
+                if (isMe)
+                  _MessageStatusIcons(
+                    isDelivered: isDelivered,
+                    isSeen: isSeen,
+                    color: isMe ? Colors.white70 : Colors.black38,
+                  ),
               ],
             ),
           ),
