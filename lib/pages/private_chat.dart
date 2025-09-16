@@ -58,6 +58,15 @@ class _PrivateChatState extends State<PrivateChat> {
         _loadNotificationSetting();
       }
     });
+    // Add scroll listener to mark messages as seen when scrolled into view
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    // Mark messages as seen when user actively scrolls
+    if (_scrollController.hasClients) {
+      _markVisibleMessagesAsSeen();
+    }
   }
 
   @override
@@ -66,7 +75,7 @@ class _PrivateChatState extends State<PrivateChat> {
     _messageController.dispose();
     _editController.dispose();
     _scrollController.dispose();
-    Supabase.instance.client.channel('*').unsubscribe();
+    // Don't unsubscribe all channels, let individual channels handle their own disposal
     super.dispose();
   }
 
@@ -108,7 +117,6 @@ class _PrivateChatState extends State<PrivateChat> {
           _messages = List<Map<String, dynamic>>.from(messages);
         });
         _scrollToBottom();
-        _markReceivedMessagesAsSeen();
       }
     } catch (e) {
       if (mounted) {
@@ -212,7 +220,6 @@ class _PrivateChatState extends State<PrivateChat> {
                 );
               }
             }
-            if (!isMine) _markMessageAsSeen(newMessage['id']);
           }
         },
       )
@@ -591,8 +598,25 @@ class _PrivateChatState extends State<PrivateChat> {
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOut,
         );
+        // Mark unseen messages as seen when scrolling to bottom
+        _markVisibleMessagesAsSeen();
       }
     });
+  }
+
+  void _markVisibleMessagesAsSeen() {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+    
+    // Mark all unseen messages from the contact as seen
+    for (final message in _messages) {
+      if (message['sender_id'] == widget.contact['id'] && !(message['is_seen'] ?? false)) {
+        _markMessageAsSeen(message['id']);
+        // Update local state to avoid redundant calls
+        message['is_seen'] = true;
+        message['last_seen'] = DateTime.now().toUtc().toIso8601String();
+      }
+    }
   }
 
   String _getStatusText() {

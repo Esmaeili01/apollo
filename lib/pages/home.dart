@@ -31,6 +31,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _loadingChats = false;
   bool _loadingGroups = false;
   Map<String, dynamic>? _userProfile;
+  
+  // Real-time subscriptions
+  RealtimeChannel? _messagesChannel;
+  RealtimeChannel? _groupMessagesChannel;
 
   @override
   void initState() {
@@ -60,13 +64,226 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _fetchPrivateChats();
     _fetchGroups();
     _fetchUserProfile();
+    _setupRealtimeSubscriptions();
   }
 
   @override
   void dispose() {
     _controller.dispose();
     _menuController.dispose();
+    _messagesChannel?.unsubscribe();
+    _groupMessagesChannel?.unsubscribe();
     super.dispose();
+  }
+
+  void _resetPrivateChatUnreadCount(String contactId) {
+    setState(() {
+      final chatIndex = _privateChats.indexWhere(
+        (chat) => chat['contact']['id'] == contactId,
+      );
+      if (chatIndex != -1) {
+        _privateChats[chatIndex]['unreadCount'] = 0;
+      }
+    });
+  }
+
+  void _resetGroupChatUnreadCount(String groupId) {
+    setState(() {
+      final groupIndex = _groups.indexWhere(
+        (group) => group['id'] == groupId,
+      );
+      if (groupIndex != -1) {
+        _groups[groupIndex]['unreadCount'] = 0;
+      }
+    });
+  }
+
+  void _setupRealtimeSubscriptions() {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    // Subscribe to private messages - use simpler channel name and filter
+    _messagesChannel = Supabase.instance.client
+        .channel('home-messages')
+        .on(
+          RealtimeListenTypes.postgresChanges,
+          ChannelFilter(
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages',
+          ),
+          (payload, [ref]) {
+            try {
+              final newMessage = payload['new'] as Map<String, dynamic>;
+              
+              // Only handle private messages (group_id is null)
+              if (newMessage['group_id'] == null) {
+                // Check if message involves current user
+                if (newMessage['sender_id'] == user.id || 
+                    newMessage['receiver_id'] == user.id) {
+                  _handleNewPrivateMessage(newMessage);
+                }
+              }
+            } catch (e) {
+              print('Error processing message in home page: $e');
+            }
+          },
+        );
+    
+    _messagesChannel?.subscribe();
+
+    // Subscribe to group messages
+    _groupMessagesChannel = Supabase.instance.client
+        .channel('home-group-messages')
+        .on(
+          RealtimeListenTypes.postgresChanges,
+          ChannelFilter(
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages',
+          ),
+          (payload, [ref]) {
+            try {
+              final newMessage = payload['new'] as Map<String, dynamic>;
+              
+              // Only handle group messages (group_id is not null)
+              if (newMessage['group_id'] != null) {
+                _handleNewGroupMessage(newMessage);
+              }
+            } catch (e) {
+              print('Error processing group message in home page: $e');
+            }
+          },
+        );
+    
+    _groupMessagesChannel?.subscribe();
+  }
+
+  Future<void> _handleNewPrivateMessage(Map<String, dynamic> message) async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      // Get sender and receiver profiles
+      final senderProfile = await Supabase.instance.client
+          .from('profiles')
+          .select('id, name, avatar_url')
+          .eq('id', message['sender_id'])
+          .maybeSingle();
+          
+      final receiverProfile = await Supabase.instance.client
+          .from('profiles')
+          .select('id, name, avatar_url')
+          .eq('id', message['receiver_id'])
+          .maybeSingle();
+
+      if (senderProfile == null || receiverProfile == null) return;
+
+      final isSender = message['sender_id'] == user.id;
+      final contact = isSender ? receiverProfile : senderProfile;
+      final contactId = contact['id'];
+
+      // Update or add to private chats
+      setState(() {
+        final existingChatIndex = _privateChats.indexWhere(
+          (chat) => chat['contact']['id'] == contactId,
+        );
+
+        final newChatData = {
+          'contact': contact,
+          'lastMessage': message['content'] ?? '',
+          'lastMessageTime': message['created_at'],
+          'isSeen': message['is_seen'] ?? false,
+          'isCurrentUserSender': isSender,
+          'unreadCount': 0, // Will be updated below
+        };
+        
+        // Update unread count
+        if (!isSender && !(message['is_seen'] ?? false)) {
+          // This is an unread message from the contact
+          if (existingChatIndex != -1) {
+            newChatData['unreadCount'] = (_privateChats[existingChatIndex]['unreadCount'] as int? ?? 0) + 1;
+          } else {
+            newChatData['unreadCount'] = 1;
+          }
+        } else if (existingChatIndex != -1) {
+          // Keep existing unread count for other cases
+          newChatData['unreadCount'] = _privateChats[existingChatIndex]['unreadCount'] ?? 0;
+        }
+
+        if (existingChatIndex != -1) {
+          // Update existing chat
+          _privateChats[existingChatIndex] = newChatData;
+          // Move to top
+          final updatedChat = _privateChats.removeAt(existingChatIndex);
+          _privateChats.insert(0, updatedChat);
+        } else {
+          // Add new chat at the top
+          _privateChats.insert(0, newChatData);
+        }
+      });
+    } catch (e) {
+      // Handle error silently
+    }
+  }
+
+  Future<void> _handleNewGroupMessage(Map<String, dynamic> message) async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final groupId = message['group_id'];
+      if (groupId == null) return;
+
+      // Check if user is member of this group
+      final membership = await Supabase.instance.client
+          .from('group_members')
+          .select('role')
+          .eq('group_id', groupId)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+      if (membership == null) return; // User is not a member
+
+      // Get sender profile
+      final senderProfile = await Supabase.instance.client
+          .from('profiles')
+          .select('id, name, username')
+          .eq('id', message['sender_id'])
+          .maybeSingle();
+
+      if (senderProfile == null) return;
+
+      final senderId = message['sender_id'];
+      final senderName = senderProfile['name'] ?? senderProfile['username'] ?? 'Unknown';
+      final isCurrentUserSender = senderId == user.id;
+      
+      // Update group in the list
+      setState(() {
+        final existingGroupIndex = _groups.indexWhere(
+          (group) => group['id'] == groupId,
+        );
+
+        if (existingGroupIndex != -1) {
+          // Update existing group
+          final currentUnreadCount = _groups[existingGroupIndex]['unreadCount'] as int? ?? 0;
+          _groups[existingGroupIndex].addAll({
+            'lastMessage': message['content'] ?? '',
+            'lastMessageTime': message['created_at'],
+            'lastMessageSenderId': senderId,
+            'lastMessageSenderName': senderName,
+            'lastMessageType': message['type'] ?? 'text',
+            'unreadCount': !isCurrentUserSender && !(message['is_seen'] ?? false) ? currentUnreadCount + 1 : currentUnreadCount,
+          });
+          
+          // Move to top
+          final updatedGroup = _groups.removeAt(existingGroupIndex);
+          _groups.insert(0, updatedGroup);
+        }
+      });
+    } catch (e) {
+      // Handle error silently
+    }
   }
 
   void _toggleDial() {
@@ -100,24 +317,43 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         .or('sender_id.eq.${user.id},receiver_id.eq.${user.id}')
         .is_('group_id', null)
         .order('created_at', ascending: false);
-    // Group by contact (other user)
+    // Group by contact (other user) and count unread messages
     final Map<String, Map<String, dynamic>> chatMap = {};
+    final Map<String, int> unreadCounts = {};
+    
     for (final msg in res) {
       final isSender = msg['sender_id'] == user.id;
       final contact = isSender ? msg['receiver'] : msg['sender'];
       if (contact == null || contact['id'] == null) continue;
       final contactId = contact['id'];
+      
+      // Count unread messages (messages from contact that are not seen)
+      if (!isSender && !(msg['is_seen'] ?? false)) {
+        unreadCounts[contactId] = (unreadCounts[contactId] ?? 0) + 1;
+      }
+      
       if (!chatMap.containsKey(contactId)) {
         chatMap[contactId] = {
           'contact': contact,
           'lastMessage': msg['content'],
           'lastMessageTime': msg['created_at'],
           'isSeen': msg['is_seen'],
+          'isCurrentUserSender': isSender,
+          'unreadCount': unreadCounts[contactId] ?? 0,
         };
       }
     }
     setState(() {
       _privateChats = chatMap.values.toList();
+      // Sort by most recent message time
+      _privateChats.sort((a, b) {
+        final timeA = a['lastMessageTime'] as String?;
+        final timeB = b['lastMessageTime'] as String?;
+        if (timeA == null && timeB == null) return 0;
+        if (timeA == null) return 1;
+        if (timeB == null) return -1;
+        return timeB.compareTo(timeA); // Most recent first
+      });
       _loadingChats = false;
     });
   }
@@ -128,8 +364,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     if (user == null) return;
 
     try {
-      print('Fetching groups for user: ${user.id}');
-
       // Get all groups where the user is a member
       final res = await Supabase.instance.client
           .from('group_members')
@@ -151,34 +385,94 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           .eq('user_id', user.id)
           .order('joined_at', ascending: false);
 
-      print('Groups query result: $res');
-      print('Result type: ${res.runtimeType}');
-      print('Result length: ${res.length}');
+
+      // Get last messages for each group
+      List<Map<String, dynamic>> groupsWithMessages = [];
+      for (final member in res) {
+        final group = member['groups'] as Map<String, dynamic>;
+        final groupId = group['id'];
+        
+        // Get the last message for this group
+        final lastMessageRes = await Supabase.instance.client
+            .from('messages')
+            .select('''
+              id,
+              content,
+              created_at,
+              sender_id,
+              type,
+              is_seen,
+              profiles!messages_sender_id_fkey(
+                id,
+                name,
+                username
+              )
+            ''')
+            .eq('group_id', groupId)
+            .order('created_at', ascending: false)
+            .limit(1);
+            
+        // Get unread messages count for this group
+        final unreadCountRes = await Supabase.instance.client
+            .from('messages')
+            .select('id')
+            .eq('group_id', groupId)
+            .neq('sender_id', user.id)  // Don't count own messages
+            .eq('is_seen', false);
+        
+        Map<String, dynamic> groupData = {
+          'id': group['id'],
+          'name': group['name'],
+          'bio': group['bio'],
+          'avatar_url': group['avatar_url'],
+          'is_public': group['is_public'],
+          'invite_link': group['invite_link'],
+          'created_at': group['created_at'],
+          'creator_id': group['creator_id'],
+          'role': member['role'],
+          'joined_at': member['joined_at'],
+          'unreadCount': unreadCountRes.length,
+        };
+        
+        // Add last message info if available
+        if (lastMessageRes.isNotEmpty) {
+          final lastMessage = lastMessageRes.first;
+          final senderProfile = lastMessage['profiles'] as Map<String, dynamic>?;
+          final senderId = lastMessage['sender_id'];
+          final senderName = senderProfile?['name'] ?? senderProfile?['username'] ?? 'Unknown';
+          
+          groupData.addAll({
+            'lastMessage': lastMessage['content'] ?? '',
+            'lastMessageTime': lastMessage['created_at'],
+            'lastMessageSenderId': senderId,
+            'lastMessageSenderName': senderName,
+            'lastMessageType': lastMessage['type'],
+          });
+        }
+        
+        groupsWithMessages.add(groupData);
+      }
 
       setState(() {
-        _groups =
-            (res as List).map((member) {
-              print('Processing member: $member');
-              final group = member['groups'] as Map<String, dynamic>;
-              return {
-                'id': group['id'],
-                'name': group['name'],
-                'bio': group['bio'],
-                'avatar_url': group['avatar_url'],
-                'is_public': group['is_public'],
-                'invite_link': group['invite_link'],
-                'created_at': group['created_at'],
-                'creator_id': group['creator_id'],
-                'role': member['role'],
-                'joined_at': member['joined_at'],
-              };
-            }).toList();
+        _groups = groupsWithMessages;
+        // Sort by most recent message time, then by joined_at for groups without messages
+        _groups.sort((a, b) {
+          final timeA = a['lastMessageTime'] as String?;
+          final timeB = b['lastMessageTime'] as String?;
+          if (timeA == null && timeB == null) {
+            // Both have no messages, sort by joined_at
+            final joinedA = a['joined_at'] as String? ?? '';
+            final joinedB = b['joined_at'] as String? ?? '';
+            return joinedB.compareTo(joinedA);
+          }
+          if (timeA == null) return 1; // Groups without messages go to bottom
+          if (timeB == null) return -1;
+          return timeB.compareTo(timeA); // Most recent first
+        });
         _loadingGroups = false;
       });
 
-      print('Final groups list: $_groups');
     } catch (e) {
-      print('Error fetching groups: $e');
       setState(() => _loadingGroups = false);
     }
   }
@@ -345,6 +639,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                         chat['lastMessage'] as String? ?? '';
                                     final lastMessageTime =
                                         chat['lastMessageTime'] as String?;
+                                    final isCurrentUserSender =
+                                        chat['isCurrentUserSender'] as bool? ?? false;
+                                    final unreadCount = chat['unreadCount'] as int? ?? 0;
+                                    
+                                    // Format last message with sender name
+                                    final displayMessage = lastMessage.isNotEmpty
+                                        ? (isCurrentUserSender ? 'You: $lastMessage' : '$name: $lastMessage')
+                                        : '';
                                     return Container(
                                       decoration: BoxDecoration(
                                         border: Border(
@@ -391,23 +693,58 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                         ),
                                         title: Text(name),
                                         subtitle: Text(
-                                          lastMessage,
+                                          displayMessage,
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                         ),
-                                        trailing:
-                                            lastMessageTime != null
-                                                ? Text(
+                                        trailing: SizedBox(
+                                          width: 60,
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment: CrossAxisAlignment.end,
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              if (lastMessageTime != null)
+                                                Text(
                                                   lastMessageTime
-                                                      .substring(0, 16)
-                                                      .replaceAll('T', ' '),
+                                                      .substring(11, 16), // Just show HH:MM
                                                   style: const TextStyle(
-                                                    fontSize: 12,
+                                                    fontSize: 11,
                                                     color: Colors.black54,
                                                   ),
-                                                )
-                                                : null,
+                                                ),
+                                              if (unreadCount > 0) ...[
+                                                const SizedBox(height: 2),
+                                                Container(
+                                                  constraints: const BoxConstraints(
+                                                    minWidth: 20,
+                                                    minHeight: 20,
+                                                  ),
+                                                  padding: const EdgeInsets.symmetric(
+                                                    horizontal: 6,
+                                                    vertical: 2,
+                                                  ),
+                                                  decoration: const BoxDecoration(
+                                                    color: Color(0xFF6D5BFF),
+                                                    borderRadius: BorderRadius.all(Radius.circular(10)),
+                                                  ),
+                                                  child: Text(
+                                                    unreadCount > 99 ? '99+' : unreadCount.toString(),
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 10,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                    textAlign: TextAlign.center,
+                                                  ),
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
                                         onTap: () {
+                                          // Reset unread count immediately for better UX
+                                          _resetPrivateChatUnreadCount(contact['id']);
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
@@ -437,6 +774,51 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 final isPublic =
                                     group['is_public'] as bool? ?? false;
                                 final role = group['role'] as int? ?? 0;
+                                
+                                // Last message info
+                                final lastMessage = group['lastMessage'] as String?;
+                                final lastMessageTime = group['lastMessageTime'] as String?;
+                                final lastMessageSenderId = group['lastMessageSenderId'] as String?;
+                                final lastMessageSenderName = group['lastMessageSenderName'] as String?;
+                                final lastMessageType = group['lastMessageType'] as String?;
+                                final unreadCount = group['unreadCount'] as int? ?? 0;
+                                
+                                // Check if sender is current user
+                                final user = Supabase.instance.client.auth.currentUser;
+                                final isCurrentUserSender = lastMessageSenderId == user?.id;
+                                
+                                // Format last message display
+                                String? lastMessageDisplay;
+                                if (lastMessage != null && lastMessage.isNotEmpty) {
+                                  final senderPrefix = isCurrentUserSender ? 'You: ' : '$lastMessageSenderName: ';
+                                  if (lastMessageType == 'text') {
+                                    lastMessageDisplay = '$senderPrefix$lastMessage';
+                                  } else {
+                                    // Handle media messages
+                                    String mediaType = '';
+                                    switch (lastMessageType) {
+                                      case 'image':
+                                        mediaType = 'Photo';
+                                        break;
+                                      case 'video':
+                                        mediaType = 'Video';
+                                        break;
+                                      case 'voice':
+                                        mediaType = 'Voice message';
+                                        break;
+                                      case 'music':
+                                        mediaType = 'Music';
+                                        break;
+                                      case 'doc':
+                                        mediaType = 'Document';
+                                        break;
+                                      default:
+                                        mediaType = 'Media';
+                                        break;
+                                    }
+                                    lastMessageDisplay = '$senderPrefix$mediaType';
+                                  }
+                                }
 
                                 String roleText = '';
                                 Color roleColor = Colors.grey;
@@ -527,7 +909,17 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
-                                        if (bio.isNotEmpty)
+                                        if (lastMessageDisplay != null)
+                                          Text(
+                                            lastMessageDisplay,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              color: Colors.black87,
+                                            ),
+                                          )
+                                        else if (bio.isNotEmpty)
                                           Text(
                                             bio,
                                             maxLines: 1,
@@ -536,28 +928,56 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                               fontSize: 13,
                                             ),
                                           ),
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              isPublic
-                                                  ? Icons.public
-                                                  : Icons.lock,
-                                              size: 12,
-                                              color: Colors.grey[600],
-                                            ),
-                                            const SizedBox(width: 4),
+                                      ],
+                                    ),
+                                    trailing: SizedBox(
+                                      width: 60,
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment: CrossAxisAlignment.end,
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          if (lastMessageTime != null)
                                             Text(
-                                              isPublic ? 'Public' : 'Private',
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.grey[600],
+                                              lastMessageTime
+                                                  .substring(11, 16), // Just show HH:MM
+                                              style: const TextStyle(
+                                                fontSize: 11,
+                                                color: Colors.black54,
+                                              ),
+                                            ),
+                                          if (unreadCount > 0) ...[
+                                            const SizedBox(height: 2),
+                                            Container(
+                                              constraints: const BoxConstraints(
+                                                minWidth: 20,
+                                                minHeight: 20,
+                                              ),
+                                              padding: const EdgeInsets.symmetric(
+                                                horizontal: 6,
+                                                vertical: 2,
+                                              ),
+                                              decoration: const BoxDecoration(
+                                                color: Color(0xFF46C2CB),
+                                                borderRadius: BorderRadius.all(Radius.circular(10)),
+                                              ),
+                                              child: Text(
+                                                unreadCount > 99 ? '99+' : unreadCount.toString(),
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                                textAlign: TextAlign.center,
                                               ),
                                             ),
                                           ],
-                                        ),
-                                      ],
+                                        ],
+                                      ),
                                     ),
                                     onTap: () {
+                                      // Reset unread count immediately for better UX
+                                      _resetGroupChatUnreadCount(group['id']);
                                       Navigator.push(
                                         context,
                                         MaterialPageRoute(

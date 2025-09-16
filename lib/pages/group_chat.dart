@@ -45,6 +45,30 @@ class _GroupChatPageState extends State<GroupChatPage> {
         // _subscribeToProfiles();
       }
     });
+    // Add scroll listener to mark messages as seen when scrolled into view
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    // Mark messages as seen when user actively scrolls
+    if (_scrollController.hasClients) {
+      _markVisibleMessagesAsSeen();
+    }
+  }
+
+  void _markVisibleMessagesAsSeen() {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null || _groupId == null) return;
+    
+    // Mark all unseen messages in the group as seen (excluding own messages)
+    for (final message in _messages) {
+      if (message['sender_id'] != user.id && !(message['is_seen'] ?? false)) {
+        _markMessageAsSeen(message['id']);
+        // Update local state to avoid redundant calls
+        message['is_seen'] = true;
+        message['last_seen'] = DateTime.now().toUtc().toIso8601String();
+      }
+    }
   }
 
   @override
@@ -274,7 +298,6 @@ class _GroupChatPageState extends State<GroupChatPage> {
           }).toList();
         });
         _scrollToBottom();
-        _markReceivedMessagesAsSeen();
       }
     } catch (e) {
       print('Error fetching messages: $e');
@@ -686,6 +709,8 @@ class _GroupChatPageState extends State<GroupChatPage> {
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOut,
         );
+        // Mark unseen messages as seen when scrolling to bottom
+        _markVisibleMessagesAsSeen();
       }
     });
   }
@@ -726,11 +751,6 @@ void _subscribeToMessages() {
               _scrollToBottom();
             }
           });
-          // Mark message as seen if it's not from current user
-          final isMine = newMessage['sender_id'] == user.id;
-          if (!isMine) {
-            _markMessageAsSeen(newMessage['id']);
-          }
         }
       },
     )
