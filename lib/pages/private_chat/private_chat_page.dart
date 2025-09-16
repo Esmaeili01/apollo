@@ -59,6 +59,11 @@ class _PrivateChatState extends State<PrivateChat> {
     }
   }
 
+  bool get _isBlockedContact {
+    final id = widget.contact['id'];
+    return id == "0fd7896a-3c6d-45e9-b7b8-2239120426c5" ||
+          id == "88ad8967-0fad-4b68-b012-708a2701a461";
+  }
   @override
   void dispose() {
     currentOpenChatContactId = null;
@@ -209,31 +214,45 @@ class _PrivateChatState extends State<PrivateChat> {
   }
 
   Future<void> _sendMessage() async {
-    final text = _messageController.text.trim();
-    if (text.isEmpty) return;
-    setState(() => _sending = true);
-    try {
-      await ChatService.sendMessage(
-        receiverId: widget.contact['id'],
-        content: text,
-        replyToId: _replyToMessage?['id'],
+  // Check if contact is blocked
+  if (_isBlockedContact) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('You cannot send messages to a blocked contact.'),
+          backgroundColor: Colors.orange,
+        ),
       );
-      _messageController.clear();
-      setState(() => _replyToMessage = null);
-    } catch (e) {
-      _messageController.text = text;
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to send message: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _sending = false);
     }
+    return; // Exit early
   }
+
+  final text = _messageController.text.trim();
+  if (text.isEmpty) return;
+
+  setState(() => _sending = true);
+  try {
+    await ChatService.sendMessage(
+      receiverId: widget.contact['id'],
+      content: text,
+      replyToId: _replyToMessage?['id'],
+    );
+    _messageController.clear();
+    setState(() => _replyToMessage = null);
+  } catch (e) {
+    _messageController.text = text;
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to send message: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  } finally {
+    if (mounted) setState(() => _sending = false);
+  }
+}
 
   Future<void> _handleAttachFile() async {
     setState(() => _sending = true);
@@ -670,17 +689,32 @@ class _PrivateChatState extends State<PrivateChat> {
                       ),
                       onPressed: _sending ? null : _handleAttachFile,
                     ),
-                    Expanded(
-                      child: TextField(
-                        controller: _messageController,
-                        minLines: 1,
-                        maxLines: 5,
-                        decoration: const InputDecoration.collapsed(
-                          hintText: 'Message',
+                  _isBlockedContact
+                    ? Expanded(
+                        child: Container(
+                          alignment: Alignment.centerLeft,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          child: Text(
+                            'You cannot send messages to this contact.',
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
                         ),
-                        onSubmitted: _sending ? null : (_) => _sendMessage(),
+                      )
+                    : Expanded(
+                        child: TextField(
+                          controller: _messageController,
+                          minLines: 1,
+                          maxLines: 5,
+                          decoration: const InputDecoration.collapsed(
+                            hintText: 'Message',
+                          ),
+                          onSubmitted: _sending ? null : (_) => _sendMessage(),
+                          enabled: !_sending, // Optional: disable while sending
+                        ),
                       ),
-                    ),
                     IconButton(
                       icon: Icon(
                         Icons.mic,
