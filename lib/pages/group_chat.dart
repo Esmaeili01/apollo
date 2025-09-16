@@ -23,6 +23,7 @@ class GroupChatPage extends StatefulWidget {
 class _GroupChatPageState extends State<GroupChatPage> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final TextEditingController _editController = TextEditingController();
   List<Map<String, dynamic>> _messages = [];
   bool _isLoading = true;
   List<Map<String, dynamic>> _members = [];
@@ -31,6 +32,8 @@ class _GroupChatPageState extends State<GroupChatPage> {
   bool _sending = false;
   RealtimeChannel? _messagesSub;
   // RealtimeChannel? _profilesSub;
+  Map<String, dynamic>? _editingMessage;
+  Map<String, dynamic>? _replyToMessage;
 
   @override
   void initState() {
@@ -48,6 +51,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
   void dispose() {
     currentOpenGroupChatId = null;
     _messageController.dispose();
+    _editController.dispose();
     _scrollController.dispose();
     _messagesSub?.unsubscribe();
     // _profilesSub?.unsubscribe();
@@ -242,6 +246,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
             sender_id,
             is_delivered,
             is_seen,
+            reply_to_id,
             profiles!messages_sender_id_fkey(
               id,
               name,
@@ -588,6 +593,91 @@ class _GroupChatPageState extends State<GroupChatPage> {
     }
   }
 
+  Future<void> _deleteMessage(Map<String, dynamic> message) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Message'),
+        content: const Text('Are you sure you want to delete this message?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null || message['sender_id'] != user.id) return;
+      await Supabase.instance.client
+          .from('messages')
+          .delete()
+          .eq('id', message['id']);
+      setState(() {
+        _messages.removeWhere((m) => m['id'] == message['id']);
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Message deleted'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete message: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _editMessage(
+    Map<String, dynamic> message,
+    String newText,
+  ) async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null || message['sender_id'] != user.id) return;
+      await Supabase.instance.client
+          .from('messages')
+          .update({'content': newText})
+          .eq('id', message['id']);
+      setState(() {
+        final idx = _messages.indexWhere((m) => m['id'] == message['id']);
+        if (idx != -1) _messages[idx]['content'] = newText;
+        _editingMessage = null;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Message edited'),
+            backgroundColor: Color(0xFF46C2CB),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to edit message: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
@@ -714,14 +804,16 @@ void _subscribeToMessages() {
         'type': MessageType.text.name,
         'is_delivered': true,
         'is_seen': false,
+        if (_replyToMessage != null) 'reply_to_id': _replyToMessage!['id'],
       });
+      setState(() => _replyToMessage = null);
     } catch (e) {
       print('Error sending message: $e');
       _messageController.text = text; // Restore text on failure
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to send message: \\${e.toString()}'),
+            content: Text('Failed to send message: ${e.toString()}'),
             backgroundColor: Colors.red,
           ),
         );
@@ -900,16 +992,43 @@ void _subscribeToMessages() {
                         final msg = _messages[i];
                         final user = Supabase.instance.client.auth.currentUser;
                         final isMe = msg['sender']?['id'] == user?.id;
-                        return _GroupMessageBubble(
-                          message: msg,
-                          isMe: isMe,
-                          members: _members,
-                          isDelivered: msg['is_delivered'] ?? false,
-                          isSeen: msg['is_seen'] ?? false,
-                        );
+                        return _editingMessage != null &&
+                                _editingMessage!['id'] == msg['id']
+                            ? _EditMessageInput(
+                                initialText: msg['content'] ?? '',
+                                onCancel: () =>
+                                    setState(() => _editingMessage = null),
+                                onSave: (newText) => _editMessage(msg, newText),
+                              )
+                            : _GroupMessageBubble(
+                                message: msg,
+                                isMe: isMe,
+                                members: _members,
+                                isDelivered: msg['is_delivered'] ?? false,
+                                isSeen: msg['is_seen'] ?? false,
+                                onShowOptions: (m, isMe) =>
+                                    _showMessageOptions(context, m, isMe),
+                                getMessageById: (id) {
+                                  final matches = _messages.where(
+                                    (msg) => msg['id'] == id,
+                                  );
+                                  return matches.isNotEmpty
+                                      ? matches.first
+                                      : null;
+                                },
+                              );
                       },
                     ),
             ),
+            if (_replyToMessage != null)
+              _ReplyPreview(
+                message: _replyToMessage!,
+                onCancel: () => setState(() => _replyToMessage = null),
+                getMessageById: (id) {
+                  final matches = _messages.where((msg) => msg['id'] == id);
+                  return matches.isNotEmpty ? matches.first : null;
+                },
+              ),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
@@ -976,6 +1095,286 @@ void _subscribeToMessages() {
       ),
     );
   }
+
+  void _showMessageOptions(
+    BuildContext context,
+    Map<String, dynamic> message,
+    bool isMe,
+  ) {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.reply, color: Color(0xFF6D5BFF)),
+                title: const Text('Reply'),
+                onTap: () {
+                  Navigator.pop(context);
+                  setState(() => _replyToMessage = message);
+                },
+              ),
+              if (isMe && message['type'] == 'text')
+                ListTile(
+                  leading: const Icon(Icons.edit, color: Color(0xFF46C2CB)),
+                  title: const Text('Edit'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    setState(() {
+                      _editingMessage = message;
+                      _editController.text = message['content'] ?? '';
+                    });
+                  },
+                ),
+              if (isMe)
+                ListTile(
+                  leading: const Icon(Icons.delete, color: Colors.red),
+                  title: const Text('Delete'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _deleteMessage(message);
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _EditMessageInput extends StatefulWidget {
+  final String initialText;
+  final VoidCallback onCancel;
+  final ValueChanged<String> onSave;
+
+  const _EditMessageInput({
+    required this.initialText,
+    required this.onCancel,
+    required this.onSave,
+  });
+
+  @override
+  State<_EditMessageInput> createState() => _EditMessageInputState();
+}
+
+class _EditMessageInputState extends State<_EditMessageInput> {
+  late TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEEEFFF),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 5,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              autofocus: true,
+              minLines: 1,
+              maxLines: 5,
+              decoration: const InputDecoration.collapsed(
+                hintText: 'Edit message',
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, color: Colors.red),
+            onPressed: widget.onCancel,
+          ),
+          IconButton(
+            icon: const Icon(Icons.check, color: Color(0xFF46C2CB)),
+            onPressed: () {
+              final text = _controller.text.trim();
+              if (text.isNotEmpty) widget.onSave(text);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReplyBubblePreview extends StatelessWidget {
+  final Map<String, dynamic>? repliedMessage;
+  final bool isMe;
+
+  const _ReplyBubblePreview({required this.repliedMessage, required this.isMe});
+
+  @override
+  Widget build(BuildContext context) {
+    if (repliedMessage == null) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: isMe ? Colors.white24 : Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Text(
+          'Message unavailable',
+          style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic),
+        ),
+      );
+    }
+    final content = repliedMessage!['content'] ?? '';
+    final type = repliedMessage!['type'] ?? 'text';
+    final senderName = repliedMessage!['sender']?['name'] ?? 'Unknown';
+    final preview = type == 'text'
+        ? content
+        : type == 'image'
+        ? '📷 Photo'
+        : type == 'voice'
+        ? '🎤 Voice message'
+        : type == 'video'
+        ? '🎬 Video'
+        : type == 'music'
+        ? '🎵 Music'
+        : '📎 Attachment';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: isMe ? Colors.white24 : Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(
+            color: isMe ? const Color(0xFF46C2CB) : const Color(0xFF6D5BFF),
+            width: 4,
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            senderName,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: isMe ? Colors.white : const Color(0xFF6D5BFF),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            preview.length > 40 ? preview.substring(0, 40) + '...' : preview,
+            style: TextStyle(
+              fontSize: 13,
+              color: isMe ? Colors.white : Colors.black87,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReplyPreview extends StatelessWidget {
+  final Map<String, dynamic> message;
+  final VoidCallback onCancel;
+  final Map<String, dynamic>? Function(String id) getMessageById;
+
+  const _ReplyPreview({
+    required this.message,
+    required this.onCancel,
+    required this.getMessageById,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final content = message['content'] ?? '';
+    final type = message['type'] ?? 'text';
+    final senderName = message['sender']?['name'] ?? 'Unknown';
+    final preview = type == 'text'
+        ? content
+        : type == 'image'
+        ? '📷 Photo'
+        : type == 'voice'
+        ? '🎤 Voice message'
+        : type == 'video'
+        ? '🎬 Video'
+        : type == 'music'
+        ? '🎵 Music'
+        : '📎 Attachment';
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(8),
+        border: const Border(
+          left: BorderSide(color: Color(0xFF6D5BFF), width: 4),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Replying to $senderName',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF6D5BFF),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  preview.length > 40 ? preview.substring(0, 40) + '...' : preview,
+                  style: const TextStyle(fontSize: 13, color: Colors.black87),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, color: Colors.red, size: 18),
+            onPressed: onCancel,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _MessageStatusIcons extends StatelessWidget {
@@ -1015,6 +1414,8 @@ class _GroupMessageBubble extends StatelessWidget {
   final List<Map<String, dynamic>> members;
   final bool isDelivered;
   final bool isSeen;
+  final void Function(Map<String, dynamic> message, bool isMe)? onShowOptions;
+  final Map<String, dynamic>? Function(String id)? getMessageById;
 
   const _GroupMessageBubble({
     required this.message,
@@ -1022,6 +1423,8 @@ class _GroupMessageBubble extends StatelessWidget {
     required this.members,
     required this.isDelivered,
     required this.isSeen,
+    this.onShowOptions,
+    this.getMessageById,
   });
 
   @override
@@ -1040,6 +1443,7 @@ class _GroupMessageBubble extends StatelessWidget {
       _ => null,
     };
     final nameRow = Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           senderName,
@@ -1069,15 +1473,17 @@ class _GroupMessageBubble extends StatelessWidget {
         ],
       ],
     );
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: isMe
-            ? MainAxisAlignment.end
-            : MainAxisAlignment.start,
-        children: [
+    return GestureDetector(
+      onLongPress: () => onShowOptions?.call(message, isMe),
+      child: Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: isMe
+              ? MainAxisAlignment.end
+              : MainAxisAlignment.start,
+          children: [
           if (!isMe)
             Padding(
               padding: const EdgeInsets.only(right: 8, top: 4),
@@ -1100,11 +1506,12 @@ class _GroupMessageBubble extends StatelessWidget {
                     : null,
               ),
             ),
-          Container(
+          Flexible(
+            child: Container(
             margin: const EdgeInsets.symmetric(vertical: 4),
             padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
             constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.75,
+              maxWidth: (MediaQuery.of(context).size.width * 0.75) - (isMe ? 0 : 44), // Account for avatar space
             ),
             decoration: BoxDecoration(
               gradient: isMe
@@ -1137,29 +1544,41 @@ class _GroupMessageBubble extends StatelessWidget {
               children: [
                 nameRow,
                 const SizedBox(height: 2),
+                if (message['reply_to_id'] != null && getMessageById != null)
+                  _ReplyBubblePreview(
+                    repliedMessage: getMessageById!(message['reply_to_id']),
+                    isMe: isMe,
+                  ),
                 _GroupMessageContent(message: message, isMe: isMe),
                 const SizedBox(height: 4),
-                Text(
-                  message['created_at'] != null
-                      ? DateFormat('HH:mm').format(
-                          DateTime.parse(message['created_at']).toLocal(),
-                        )
-                      : '',
-                  style: TextStyle(
-                    color: isMe ? Colors.white70 : Colors.black38,
-                    fontSize: 11,
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      message['created_at'] != null
+                          ? DateFormat('HH:mm').format(
+                              DateTime.parse(message['created_at']).toLocal(),
+                            )
+                          : '',
+                      style: TextStyle(
+                        color: isMe ? Colors.white70 : Colors.black38,
+                        fontSize: 11,
+                      ),
+                    ),
+                    if (isMe)
+                      _MessageStatusIcons(
+                        isDelivered: isDelivered,
+                        isSeen: isSeen,
+                        color: isMe ? Colors.white70 : Colors.black38,
+                      ),
+                  ],
                 ),
-                if (isMe)
-                  _MessageStatusIcons(
-                    isDelivered: isDelivered,
-                    isSeen: isSeen,
-                    color: isMe ? Colors.white70 : Colors.black38,
-                  ),
               ],
             ),
           ),
-        ],
+          ),
+          ],
+        ),
       ),
     );
   }
