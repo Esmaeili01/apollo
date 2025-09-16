@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'private_chat.dart';
+import 'private_chat/private_chat.dart';
 
 class Contacts extends StatefulWidget {
   const Contacts({super.key});
@@ -10,7 +10,6 @@ class Contacts extends StatefulWidget {
 }
 
 class _ContactsState extends State<Contacts> {
-  final TextEditingController _usernameController = TextEditingController();
   bool _isLoading = false;
   String? _error;
   String? _dialogError;
@@ -39,12 +38,11 @@ class _ContactsState extends State<Contacts> {
 
       List<Map<String, dynamic>> contactsWithProfiles = [];
       for (final contact in contacts) {
-        final profileRes =
-            await Supabase.instance.client
-                .from('profiles')
-                .select('id, name, bio, avatar_url, last_seen')
-                .eq('id', contact['contact_id'])
-                .maybeSingle();
+        final profileRes = await Supabase.instance.client
+            .from('profiles')
+            .select('id, name, bio, avatar_url, last_seen')
+            .eq('id', contact['contact_id'])
+            .maybeSingle();
         if (profileRes != null) {
           profileRes['nickname'] = contact['nickname'];
           contactsWithProfiles.add(profileRes);
@@ -65,76 +63,6 @@ class _ContactsState extends State<Contacts> {
     }
   }
 
-  Future<void> _addContact() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-    final username = _usernameController.text.trim();
-    if (username.isEmpty) {
-      setState(() {
-        _isLoading = false;
-        _error = 'Please enter a username.';
-      });
-      return;
-    }
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      setState(() {
-        _isLoading = false;
-        _error = 'Not logged in.';
-      });
-      return;
-    }
-    // Find the user by username
-    final res =
-        await Supabase.instance.client
-            .from('profiles')
-            .select('id, name, bio, avatar_url')
-            .eq('username', username)
-            .maybeSingle();
-    if (res == null) {
-      setState(() {
-        _isLoading = false;
-        _error = 'No user found';
-      });
-      return;
-    }
-    if (res['id'] == user.id) {
-      setState(() {
-        _isLoading = false;
-        _error = 'You cannot add yourself.';
-      });
-      return;
-    }
-    // Prevent duplicates
-    if (_contacts.any((c) => c['id'] == res['id'])) {
-      setState(() {
-        _isLoading = false;
-        _error = 'Already in contacts.';
-      });
-      return;
-    }
-    // Insert into contacts table
-    final insertRes =
-        await Supabase.instance.client.from('contacts').insert({
-          'user_id': user.id,
-          'contact_id': res['id'],
-        }).select();
-    if (insertRes == null || insertRes.isEmpty) {
-      setState(() {
-        _isLoading = false;
-        _error = 'Failed to add contact.';
-      });
-      return;
-    }
-    setState(() {
-      _contacts.add(res);
-      _isLoading = false;
-      _error = null;
-      _usernameController.clear();
-    });
-  }
 
   Future<void> _removeContact(String contactId) async {
     final user = Supabase.instance.client.auth.currentUser;
@@ -179,114 +107,108 @@ class _ContactsState extends State<Contacts> {
             ],
             const SizedBox(height: 16),
             Expanded(
-              child:
-                  _isLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _contacts.isEmpty
-                      ? const Center(child: Text('No contacts yet.'))
-                      : ListView.separated(
-                        itemCount: _contacts.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemBuilder: (context, i) {
-                          final c = _contacts[i];
-                          final avatarUrl = c['avatar_url'] as String?;
-                          final name = c['name'] as String? ?? '';
-                          final bio = c['bio'] as String? ?? '';
-                          final lastSeen = c['last_seen'];
-                          return GestureDetector(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => PrivateChat(contact: c),
-                                ),
-                              );
-                            },
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(
-                                  color: const Color(0xFF6D5BFF),
-                                  width: 1.2,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.04),
-                                    blurRadius: 4,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ],
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _contacts.isEmpty
+                  ? const Center(child: Text('No contacts yet.'))
+                  : ListView.separated(
+                      itemCount: _contacts.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (context, i) {
+                        final c = _contacts[i];
+                        final avatarUrl = c['avatar_url'] as String?;
+                        final name = c['name'] as String? ?? '';
+                        final lastSeen = c['last_seen'];
+                        return GestureDetector(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => PrivateChat(contact: c),
                               ),
-                              child: ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: const Color(0xFF46C2CB),
-                                  backgroundImage:
-                                      avatarUrl != null && avatarUrl.isNotEmpty
-                                          ? NetworkImage(avatarUrl)
-                                          : null,
-                                  child:
-                                      avatarUrl == null || avatarUrl.isEmpty
-                                          ? Text(
-                                            name.isNotEmpty
-                                                ? name
-                                                    .substring(0, 1)
-                                                    .toUpperCase()
-                                                : '?',
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          )
-                                          : null,
+                            );
+                          },
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: const Color(0xFF6D5BFF),
+                                width: 1.2,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.04),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
                                 ),
-                                title: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      name,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    if (c['is_online'] == true)
-                                      Text(
-                                        'online',
+                              ],
+                            ),
+                            child: ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: const Color(0xFF46C2CB),
+                                backgroundImage:
+                                    avatarUrl != null && avatarUrl.isNotEmpty
+                                    ? NetworkImage(avatarUrl)
+                                    : null,
+                                child: avatarUrl == null || avatarUrl.isEmpty
+                                    ? Text(
+                                        name.isNotEmpty
+                                            ? name.substring(0, 1).toUpperCase()
+                                            : '?',
                                         style: const TextStyle(
-                                          color: Colors.green,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w500,
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
                                         ),
                                       )
-                                    else if (lastSeen != null)
-                                      Text(
-                                        _getStatusText(lastSeen),
-                                        style: const TextStyle(
-                                          fontSize: 13,
-                                          color: Colors.grey,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                                subtitle: null,
-                                trailing: IconButton(
-                                  icon: const Icon(
-                                    Icons.delete,
-                                    color: Colors.red,
+                                    : null,
+                              ),
+                              title: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    name,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
-                                  onPressed:
-                                      () => _showRemoveContactDialog(
-                                        c['id'] as String,
-                                        c['name'] as String? ?? '',
+                                  if (c['is_online'] == true)
+                                    Text(
+                                      'online',
+                                      style: const TextStyle(
+                                        color: Colors.green,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
                                       ),
-                                  tooltip: 'Remove',
+                                    )
+                                  else if (lastSeen != null)
+                                    Text(
+                                      _getStatusText(lastSeen),
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              subtitle: null,
+                              trailing: IconButton(
+                                icon: const Icon(
+                                  Icons.delete,
+                                  color: Colors.red,
                                 ),
+                                onPressed: () => _showRemoveContactDialog(
+                                  c['id'] as String,
+                                  c['name'] as String? ?? '',
+                                ),
+                                tooltip: 'Remove',
                               ),
                             ),
-                          );
-                        },
-                      ),
+                          ),
+                        );
+                      },
+                    ),
             ),
           ],
         ),
@@ -313,7 +235,6 @@ class _ContactsState extends State<Contacts> {
 
   void _showAddContactDialog(BuildContext context) {
     final usernameController = TextEditingController();
-    final nicknameController = TextEditingController();
     _dialogError = null;
     showDialog(
       context: context,
@@ -373,55 +294,32 @@ class _ContactsState extends State<Contacts> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: nicknameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Nickname',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.all(Radius.circular(16)),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.all(Radius.circular(16)),
-                          borderSide: BorderSide(
-                            color: Color(0xFF6D5BFF),
-                            width: 1.5,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.all(Radius.circular(16)),
-                          borderSide: BorderSide(
-                            color: Color(0xFF46C2CB),
-                            width: 2,
-                          ),
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ),
               actions: [
                 ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    elevation: 0,
-                    backgroundColor: Colors.transparent,
-                    shadowColor: Colors.transparent,
-                  ).copyWith(
-                    backgroundColor: MaterialStateProperty.resolveWith<Color?>(
-                      (states) => null,
-                    ),
-                  ),
+                  style:
+                      ElevatedButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        elevation: 0,
+                        backgroundColor: Colors.transparent,
+                        shadowColor: Colors.transparent,
+                      ).copyWith(
+                        backgroundColor:
+                            MaterialStateProperty.resolveWith<Color?>(
+                              (states) => null,
+                            ),
+                      ),
                   onPressed: () async {
                     final username = usernameController.text.trim();
-                    final nickname = nicknameController.text.trim();
-                    if (username.isEmpty || nickname.isEmpty) {
+                    // final nickname = nicknameController.text.trim();
+                    if (username.isEmpty) {
                       setDialogState(() {
-                        _dialogError =
-                            'Please enter both username and nickname.';
+                        _dialogError = 'Please enter username.';
                       });
                       return;
                     }
@@ -436,12 +334,11 @@ class _ContactsState extends State<Contacts> {
                     }
 
                     // Find the user by username
-                    final res =
-                        await Supabase.instance.client
-                            .from('profiles')
-                            .select('id, name, bio, avatar_url')
-                            .eq('username', username)
-                            .maybeSingle();
+                    final res = await Supabase.instance.client
+                        .from('profiles')
+                        .select('id, name, bio, avatar_url')
+                        .eq('username', username)
+                        .maybeSingle();
 
                     if (res == null) {
                       setDialogState(() {
@@ -464,13 +361,12 @@ class _ContactsState extends State<Contacts> {
                       });
                       return;
                     }
-
-                    // Insert into contacts table with nickname
+                  
                     final insertRes =
                         await Supabase.instance.client.from('contacts').insert({
                           'user_id': user.id,
                           'contact_id': res['id'],
-                          'nickname': nickname,
+                          'nickname': res['name'],
                         }).select();
 
                     if (insertRes == null || insertRes.isEmpty) {
@@ -577,19 +473,20 @@ class _ContactsState extends State<Contacts> {
           ),
           actions: [
             ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                padding: EdgeInsets.zero,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                elevation: 0,
-                backgroundColor: Colors.transparent,
-                shadowColor: Colors.transparent,
-              ).copyWith(
-                backgroundColor: MaterialStateProperty.resolveWith<Color?>(
-                  (states) => null,
-                ),
-              ),
+              style:
+                  ElevatedButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    elevation: 0,
+                    backgroundColor: Colors.transparent,
+                    shadowColor: Colors.transparent,
+                  ).copyWith(
+                    backgroundColor: MaterialStateProperty.resolveWith<Color?>(
+                      (states) => null,
+                    ),
+                  ),
               onPressed: () {
                 Navigator.of(context).pop();
                 _removeContact(contactId);
@@ -617,19 +514,20 @@ class _ContactsState extends State<Contacts> {
             ),
             const SizedBox(height: 1),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                padding: EdgeInsets.zero,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                elevation: 0,
-                backgroundColor: Colors.transparent,
-                shadowColor: Colors.transparent,
-              ).copyWith(
-                backgroundColor: MaterialStateProperty.resolveWith<Color?>(
-                  (states) => null,
-                ),
-              ),
+              style:
+                  ElevatedButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    elevation: 0,
+                    backgroundColor: Colors.transparent,
+                    shadowColor: Colors.transparent,
+                  ).copyWith(
+                    backgroundColor: MaterialStateProperty.resolveWith<Color?>(
+                      (states) => null,
+                    ),
+                  ),
               onPressed: () => Navigator.of(context).pop(),
               child: Ink(
                 decoration: BoxDecoration(
