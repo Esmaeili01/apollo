@@ -2,29 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
-import 'user_profile.dart';
+import '../user_profile.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import '../main.dart';
+import '../../main.dart';
 import 'dart:html' as html;
 import 'dart:typed_data';
-import 'package:audioplayers/audioplayers.dart';
 
-enum MessageType {
-  text,
-  image,
-  video,
-  voice,
-  music,
-  doc;
-
-  static MessageType fromString(String type) {
-    return MessageType.values.firstWhere(
-      (e) => e.name == type,
-      orElse: () => MessageType.doc,
-    );
-  }
-}
+import 'models/message_type.dart';
+import 'services/chat_service.dart';
+import 'services/file_service.dart';
+import 'widgets/message_bubble.dart';
+import 'widgets/edit_message_input.dart';
+import 'widgets/reply_widgets.dart';
 
 class PrivateChat extends StatefulWidget {
   const PrivateChat({required this.contact, super.key});
@@ -84,37 +74,21 @@ class _PrivateChatState extends State<PrivateChat> {
   }
 
   Future<void> _fetchContactProfile() async {
-    try {
-      final res = await Supabase.instance.client
-          .from('profiles')
-          .select()
-          .eq('id', widget.contact['id'])
-          .maybeSingle();
-      if (mounted) {
-        setState(() {
-          _contactProfile = res;
-        });
-      }
-    } catch (e) {
-      // Removed print statement
+    final profile = await ChatService.fetchContactProfile(widget.contact['id']);
+    if (mounted) {
+      setState(() {
+        _contactProfile = profile;
+      });
     }
   }
 
   Future<void> _fetchMessages() async {
     if (mounted) setState(() => _isLoading = true);
     try {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user == null) return;
-      final messages = await Supabase.instance.client
-          .from('messages')
-          .select()
-          .or(
-            'and(sender_id.eq.${user.id},receiver_id.eq.${widget.contact['id']}),and(sender_id.eq.${widget.contact['id']},receiver_id.eq.${user.id})',
-          )
-          .order('created_at', ascending: true);
+      final messages = await ChatService.fetchMessages(widget.contact['id']);
       if (mounted) {
         setState(() {
-          _messages = List<Map<String, dynamic>>.from(messages);
+          _messages = messages;
         });
         _scrollToBottom();
       }
@@ -132,47 +106,10 @@ class _PrivateChatState extends State<PrivateChat> {
     }
   }
 
-  Future<void> _markMessageAsSeen(String messageId) async {
-    try {
-      await Supabase.instance.client
-          .from('messages')
-          .update({
-            'is_seen': true,
-            'last_seen': DateTime.now().toUtc().toIso8601String(),
-          })
-          .eq('id', messageId);
-    } catch (e) {
-      // Removed print statement
-    }
-  }
-
-  Future<void> _markReceivedMessagesAsSeen() async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-    try {
-      await Supabase.instance.client
-          .from('messages')
-          .update({
-            'is_seen': true,
-            'last_seen': DateTime.now().toUtc().toIso8601String(),
-          })
-          .eq('sender_id', widget.contact['id'])
-          .eq('receiver_id', user.id)
-          .eq('is_seen', false);
-    } catch (e) {
-      // Removed print statement
-    }
-  }
-
-  String getPrivateChatChannelName(String userId1, String userId2) {
-    final ids = [userId1, userId2]..sort();
-    return 'private-chat-${ids[0]}-${ids[1]}';
-  }
-
   void _subscribeToMessages() {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
-    final channelName = getPrivateChatChannelName(
+    final channelName = ChatService.getPrivateChatChannelName(
       user.id,
       widget.contact['id'],
     );
@@ -205,11 +142,7 @@ class _PrivateChatState extends State<PrivateChat> {
             if (!isMine &&
                 _notificationsEnabled &&
                 html.document.visibilityState != 'visible') {
-              final profile = await Supabase.instance.client
-                  .from('profiles')
-                  .select()
-                  .eq('id', widget.contact['id'])
-                  .maybeSingle();
+              final profile = await ChatService.fetchContactProfile(widget.contact['id']);
               if (html.Notification.permission != 'granted')
                 await html.Notification.requestPermission();
               if (html.Notification.permission == 'granted') {
@@ -280,17 +213,11 @@ class _PrivateChatState extends State<PrivateChat> {
     if (text.isEmpty) return;
     setState(() => _sending = true);
     try {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user == null) return;
-      await Supabase.instance.client.from('messages').insert({
-        'sender_id': user.id,
-        'receiver_id': widget.contact['id'],
-        'content': text,
-        'type': MessageType.text.name,
-        'is_delivered': true,
-        'is_seen': false,
-        if (_replyToMessage != null) 'reply_to_id': _replyToMessage!['id'],
-      });
+      await ChatService.sendMessage(
+        receiverId: widget.contact['id'],
+        content: text,
+        replyToId: _replyToMessage?['id'],
+      );
       _messageController.clear();
       setState(() => _replyToMessage = null);
     } catch (e) {
@@ -308,44 +235,16 @@ class _PrivateChatState extends State<PrivateChat> {
     }
   }
 
-  ({String bucket, String type}) _getFileInfo(String? extension) {
-    final ext = extension?.toLowerCase() ?? '';
-    if (['jpg', 'jpeg', 'png', 'gif'].contains(ext))
-      return (bucket: 'pics', type: MessageType.image.name);
-    if (['mp4', 'mov', 'avi', 'webm'].contains(ext))
-      return (bucket: 'vids', type: MessageType.video.name);
-    if (['mp3', 'wav', 'ogg'].contains(ext))
-      return (bucket: 'musics', type: MessageType.music.name);
-    if (ext == 'm4a' || ext == 'webm')
-      return (bucket: 'voices', type: MessageType.voice.name);
-    return (bucket: 'docs', type: MessageType.doc.name);
-  }
-
-  Future<String> _uploadFileToSupabase(PlatformFile file, String bucket) async {
-    final storage = Supabase.instance.client.storage.from(bucket);
-    final userId = Supabase.instance.client.auth.currentUser!.id;
-    final fileExt = file.extension ?? 'bin';
-    final filePath =
-        '$userId/${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-    final bytes = file.bytes;
-    if (bytes == null) throw 'File data is empty.';
-    await storage.uploadBinary(
-      filePath,
-      bytes,
-      fileOptions: const FileOptions(upsert: false),
-    );
-    return storage.getPublicUrl(filePath);
-  }
-
   Future<void> _handleAttachFile() async {
     setState(() => _sending = true);
     try {
       final result = await FilePicker.platform.pickFiles(withData: true);
       if (result == null || result.files.isEmpty) return;
       final file = result.files.first;
-      final fileInfo = _getFileInfo(file.extension);
-      final url = await _uploadFileToSupabase(file, fileInfo.bucket);
-      await _sendMultimediaMessage(
+      final fileInfo = FileService.getFileInfo(file.extension);
+      final url = await FileService.uploadFileToSupabase(file, fileInfo.bucket);
+      await ChatService.sendMultimediaMessage(
+        receiverId: widget.contact['id'],
         type: fileInfo.type,
         urls: [url],
         content: file.name,
@@ -362,25 +261,6 @@ class _PrivateChatState extends State<PrivateChat> {
     } finally {
       if (mounted) setState(() => _sending = false);
     }
-  }
-
-  Future<void> _sendMultimediaMessage({
-    required String type,
-    required List<String> urls,
-    String? content,
-  }) async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-    await Supabase.instance.client.from('messages').insert({
-      'sender_id': user.id,
-      'receiver_id': widget.contact['id'],
-      'content': content,
-      'type': type,
-      'is_multimedia': true,
-      'media_url': urls,
-      'is_delivered': true,
-      'is_seen': false,
-    });
   }
 
   Future<void> _handleRecordVoice() async {
@@ -443,8 +323,12 @@ class _PrivateChatState extends State<PrivateChat> {
         size: bytes.length,
         bytes: bytes,
       );
-      final url = await _uploadFileToSupabase(file, 'voices');
-      await _sendMultimediaMessage(type: MessageType.voice.name, urls: [url]);
+      final url = await FileService.uploadFileToSupabase(file, 'voices');
+      await ChatService.sendMultimediaMessage(
+        receiverId: widget.contact['id'],
+        type: MessageType.voice.name,
+        urls: [url],
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -479,12 +363,7 @@ class _PrivateChatState extends State<PrivateChat> {
     );
     if (confirm != true) return;
     try {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user == null || message['sender_id'] != user.id) return;
-      await Supabase.instance.client
-          .from('messages')
-          .delete()
-          .eq('id', message['id']);
+      await ChatService.deleteMessage(message['id'], message['sender_id']);
       setState(() {
         _messages.removeWhere((m) => m['id'] == message['id']);
       });
@@ -513,12 +392,7 @@ class _PrivateChatState extends State<PrivateChat> {
     String newText,
   ) async {
     try {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user == null || message['sender_id'] != user.id) return;
-      await Supabase.instance.client
-          .from('messages')
-          .update({'content': newText})
-          .eq('id', message['id']);
+      await ChatService.editMessage(message['id'], message['sender_id'], newText);
       setState(() {
         final idx = _messages.indexWhere((m) => m['id'] == message['id']);
         if (idx != -1) _messages[idx]['content'] = newText;
@@ -569,11 +443,7 @@ class _PrivateChatState extends State<PrivateChat> {
       if (userId == null) return;
       final current = _notificationsEnabled;
       final newValue = !current;
-      await Supabase.instance.client
-          .from('contacts')
-          .update({'notifications_enabled': newValue})
-          .eq('user_id', userId)
-          .eq('contact_id', widget.contact['id']);
+      await ChatService.toggleNotification(widget.contact['id'], newValue);
       setState(() => _notificationsEnabled = newValue);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -611,7 +481,7 @@ class _PrivateChatState extends State<PrivateChat> {
     // Mark all unseen messages from the contact as seen
     for (final message in _messages) {
       if (message['sender_id'] == widget.contact['id'] && !(message['is_seen'] ?? false)) {
-        _markMessageAsSeen(message['id']);
+        ChatService.markMessageAsSeen(message['id']);
         // Update local state to avoid redundant calls
         message['is_seen'] = true;
         message['last_seen'] = DateTime.now().toUtc().toIso8601String();
@@ -737,13 +607,13 @@ class _PrivateChatState extends State<PrivateChat> {
                             Supabase.instance.client.auth.currentUser?.id;
                         return _editingMessage != null &&
                                 _editingMessage!['id'] == msg['id']
-                            ? _EditMessageInput(
+                            ? EditMessageInput(
                                 initialText: msg['content'] ?? '',
                                 onCancel: () =>
                                     setState(() => _editingMessage = null),
                                 onSave: (newText) => _editMessage(msg, newText),
                               )
-                            : _MessageBubble(
+                            : MessageBubble(
                                 message: msg,
                                 isMe: isMe,
                                 isDelivered: msg['is_delivered'] ?? false,
@@ -770,7 +640,7 @@ class _PrivateChatState extends State<PrivateChat> {
                     ),
             ),
             if (_replyToMessage != null)
-              _ReplyPreview(
+              ReplyPreview(
                 message: _replyToMessage!,
                 onCancel: () => setState(() => _replyToMessage = null),
                 getMessageById: (id) {
@@ -894,568 +764,6 @@ class _PrivateChatState extends State<PrivateChat> {
           ),
         );
       },
-    );
-  }
-}
-
-class _MessageBubble extends StatelessWidget {
-  final Map<String, dynamic> message;
-  final bool isMe;
-  final bool isDelivered;
-  final bool isSeen;
-  final void Function(Map<String, dynamic> message)? onEdit;
-  final void Function(Map<String, dynamic> message)? onDelete;
-  final void Function(Map<String, dynamic> message)? onReply;
-  final void Function(Map<String, dynamic> message, bool isMe)? onShowOptions;
-  final Map<String, dynamic>? Function(String id)? getMessageById;
-
-  const _MessageBubble({
-    required this.message,
-    required this.isMe,
-    required this.isDelivered,
-    required this.isSeen,
-    this.onEdit,
-    this.onDelete,
-    this.onReply,
-    this.onShowOptions,
-    this.getMessageById,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onLongPress: () => onShowOptions?.call(message, isMe),
-      child: Align(
-        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.75,
-          ),
-          decoration: BoxDecoration(
-            gradient: isMe
-                ? const LinearGradient(
-                    colors: [Color(0xFF6D5BFF), Color(0xFF46C2CB)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  )
-                : null,
-            color: isMe ? null : Colors.white,
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(20),
-              topRight: const Radius.circular(20),
-              bottomLeft: Radius.circular(isMe ? 20 : 4),
-              bottomRight: Radius.circular(isMe ? 4 : 20),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.08),
-                blurRadius: 5,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: isMe
-                ? CrossAxisAlignment.end
-                : CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (message['reply_to_id'] != null && getMessageById != null)
-                _ReplyBubblePreview(
-                  repliedMessage: getMessageById!(message['reply_to_id']),
-                  isMe: isMe,
-                ),
-              _MessageContent(message: message, isMe: isMe),
-              const SizedBox(height: 4),
-              Text(
-                message['created_at'] != null
-                    ? DateFormat(
-                        'HH:mm',
-                      ).format(DateTime.parse(message['created_at']).toLocal())
-                    : '',
-                style: TextStyle(
-                  color: isMe ? Colors.white70 : Colors.black38,
-                  fontSize: 11,
-                ),
-              ),
-              if (isMe)
-                _MessageStatusIcons(
-                  isDelivered: isDelivered,
-                  isSeen: isSeen,
-                  color: isMe ? Colors.white70 : Colors.black38,
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MessageStatusIcons extends StatelessWidget {
-  final bool isDelivered;
-  final bool isSeen;
-  final Color color;
-
-  const _MessageStatusIcons({
-    required this.isDelivered,
-    required this.isSeen,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const SizedBox(width: 4),
-        if (!isDelivered)
-          Icon(Icons.access_time, size: 16, color: color)
-        else if (isDelivered && !isSeen)
-          Icon(Icons.done, size: 16, color: color)
-        else if (isDelivered && isSeen)
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [Icon(Icons.done_all, size: 16, color: Colors.black)],
-          ),
-      ],
-    );
-  }
-}
-
-class _MessageContent extends StatelessWidget {
-  final Map<String, dynamic> message;
-  final bool isMe;
-
-  const _MessageContent({required this.message, required this.isMe});
-
-  void _downloadFile(String url, String filename) {
-    html.AnchorElement(href: url)
-      ..setAttribute('download', filename)
-      ..click();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final type = MessageType.fromString(message['type'] ?? 'text');
-    final content = message['content'] as String? ?? '';
-    final mediaUrl = (message['media_url'] as List?)?.firstOrNull as String?;
-    final textColor = isMe ? Colors.white : Colors.black87;
-
-    switch (type) {
-      case MessageType.text:
-        return Text(content, style: TextStyle(color: textColor, fontSize: 16));
-      case MessageType.image:
-        if (mediaUrl == null) return const Text('📷 Image not available');
-        return Stack(
-          children: [
-            SizedBox(
-              width: 300,
-              height: 450,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.network(
-                  mediaUrl,
-                  fit: BoxFit.cover,
-                  loadingBuilder: (context, child, progress) => progress == null
-                      ? child
-                      : const CircularProgressIndicator(),
-                  errorBuilder: (_, __, ___) => Icon(
-                    Icons.broken_image,
-                    color: textColor.withOpacity(0.8),
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              bottom: 8,
-              right: 8,
-              child: IconButton(
-                icon: const Icon(Icons.download_rounded, color: Colors.white),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                onPressed: () => _downloadFile(
-                  mediaUrl,
-                  'image.${mediaUrl.split('.').lastOrNull ?? 'jpg'}',
-                ),
-              ),
-            ),
-          ],
-        );
-      case MessageType.voice:
-        if (mediaUrl == null)
-          return const Text('🎤 Voice message not available');
-        return _VoiceMessagePlayer(mediaUrl: mediaUrl, isMe: isMe);
-      case MessageType.video:
-      case MessageType.doc:
-      case MessageType.music:
-        final icon = switch (type) {
-          MessageType.video => Icons.videocam,
-          MessageType.music => Icons.music_note,
-          _ => Icons.insert_drive_file,
-        };
-        final fallbackFilename =
-            'download.${mediaUrl?.split('.').lastOrNull ?? 'dat'}';
-        return Stack(
-          children: [
-            Container(
-              padding: const EdgeInsets.only(
-                right: 32,
-              ), // Space for download icon
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, color: textColor.withOpacity(0.8)),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      content.isNotEmpty ? content : 'Attachment',
-                      style: TextStyle(color: textColor),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (mediaUrl != null)
-              Positioned(
-                bottom: 0,
-                right: 0,
-                child: IconButton(
-                  icon: Icon(
-                    Icons.download_rounded,
-                    color: textColor,
-                    size: 20,
-                  ),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: () => _downloadFile(
-                    mediaUrl,
-                    content.isNotEmpty ? content : fallbackFilename,
-                  ),
-                ),
-              ),
-          ],
-        );
-    }
-  }
-}
-
-class _VoiceMessagePlayer extends StatefulWidget {
-  final String mediaUrl;
-  final bool isMe;
-
-  const _VoiceMessagePlayer({required this.mediaUrl, required this.isMe});
-
-  @override
-  State<_VoiceMessagePlayer> createState() => _VoiceMessagePlayerState();
-}
-
-class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
-  final AudioPlayer _audioPlayer = AudioPlayer();
-  bool _isPlaying = false;
-  Duration _duration = Duration.zero;
-  Duration _position = Duration.zero;
-
-  StreamSubscription? _durationSubscription;
-  StreamSubscription? _positionSubscription;
-  StreamSubscription? _playerCompleteSubscription;
-  StreamSubscription? _playerStateChangeSubscription;
-
-  @override
-  void initState() {
-    super.initState();
-    _audioPlayer.setSourceUrl(widget.mediaUrl);
-    _playerStateChangeSubscription = _audioPlayer.onPlayerStateChanged.listen((
-      state,
-    ) {
-      if (mounted) setState(() => _isPlaying = state == PlayerState.playing);
-    });
-    _durationSubscription = _audioPlayer.onDurationChanged.listen((
-      newDuration,
-    ) {
-      if (mounted) setState(() => _duration = newDuration);
-    });
-    _positionSubscription = _audioPlayer.onPositionChanged.listen((
-      newPosition,
-    ) {
-      if (mounted) setState(() => _position = newPosition);
-    });
-    _playerCompleteSubscription = _audioPlayer.onPlayerComplete.listen((event) {
-      if (mounted) setState(() => _position = Duration.zero);
-    });
-  }
-
-  @override
-  void dispose() {
-    _durationSubscription?.cancel();
-    _positionSubscription?.cancel();
-    _playerCompleteSubscription?.cancel();
-    _playerStateChangeSubscription?.cancel();
-    _audioPlayer.dispose();
-    super.dispose();
-  }
-
-  String _formatDuration(Duration d) {
-    final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$minutes:$seconds';
-  }
-
-@override
-Widget build(BuildContext context) {
-  final color = widget.isMe ? Colors.white : const Color(0xFF6D5BFF);
-  final inactiveColor = widget.isMe ? Colors.white.withOpacity(0.7) : Colors.grey.shade400;
-
-  return Stack(
-    children: [
-      Container(
-        padding: const EdgeInsets.only(right: 32), // Space for download icon
-        constraints: const BoxConstraints(maxWidth: 200), // Limit width
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: () async {
-                    if (_isPlaying) {
-                      await _audioPlayer.pause();
-                    } else {
-                      if (_position >= _duration && _duration > Duration.zero) {
-                        await _audioPlayer.seek(Duration.zero);
-                      }
-                      await _audioPlayer.play(UrlSource(widget.mediaUrl));
-                    }
-                  },
-                  icon: Icon(_isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled, color: color, size: 32),
-                ),
-                const SizedBox(width: 8),
-                if (_duration > Duration.zero)
-                  Flexible(
-                    child: Slider(
-                      value: _position.inSeconds.toDouble(),
-                      max: _duration.inSeconds.toDouble(),
-                      onChanged: (value) async {
-                        final position = Duration(seconds: value.toInt());
-                        await _audioPlayer.seek(position);
-                      },
-                      activeColor: color,
-                      inactiveColor: inactiveColor,
-                    ),
-                  ),
-              ],
-            ),
-            if (_duration > Duration.zero)
-              Text(
-                '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
-                style: TextStyle(fontSize: 12, color: color.withOpacity(0.9)),
-              ),
-          ],
-        ),
-      ),
-    ],
-  );
-}
-}
-
-class _EditMessageInput extends StatefulWidget {
-  final String initialText;
-  final VoidCallback onCancel;
-  final ValueChanged<String> onSave;
-
-  const _EditMessageInput({
-    required this.initialText,
-    required this.onCancel,
-    required this.onSave,
-  });
-
-  @override
-  State<_EditMessageInput> createState() => _EditMessageInputState();
-}
-
-class _EditMessageInputState extends State<_EditMessageInput> {
-  late TextEditingController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.initialText);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEEEFFF),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 5,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _controller,
-              autofocus: true,
-              minLines: 1,
-              maxLines: 5,
-              decoration: const InputDecoration.collapsed(
-                hintText: 'Edit message',
-              ),
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.close, color: Colors.red),
-            onPressed: widget.onCancel,
-          ),
-          IconButton(
-            icon: const Icon(Icons.check, color: Color(0xFF46C2CB)),
-            onPressed: () {
-              final text = _controller.text.trim();
-              if (text.isNotEmpty) widget.onSave(text);
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ReplyBubblePreview extends StatelessWidget {
-  final Map<String, dynamic>? repliedMessage;
-  final bool isMe;
-
-  const _ReplyBubblePreview({required this.repliedMessage, required this.isMe});
-
-  @override
-  Widget build(BuildContext context) {
-    if (repliedMessage == null) {
-      return Container(
-        margin: const EdgeInsets.only(bottom: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: isMe ? Colors.white24 : Colors.grey.shade200,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: const Text(
-          'Message unavailable',
-          style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic),
-        ),
-      );
-    }
-    final content = repliedMessage!['content'] ?? '';
-    final type = repliedMessage!['type'] ?? 'text';
-    final preview = type == 'text'
-        ? content
-        : type == 'image'
-        ? '📷 Photo'
-        : type == 'voice'
-        ? '🎤 Voice message'
-        : type == 'video'
-        ? '🎬 Video'
-        : type == 'music'
-        ? '🎵 Music'
-        : '📎 Attachment';
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: isMe ? Colors.white24 : Colors.grey.shade200,
-        borderRadius: BorderRadius.circular(8),
-        border: Border(
-          left: BorderSide(
-            color: isMe ? const Color(0xFF46C2CB) : const Color(0xFF6D5BFF),
-            width: 4,
-          ),
-        ),
-      ),
-      child: Text(
-        preview.length > 40 ? preview.substring(0, 40) + '...' : preview,
-        style: TextStyle(
-          fontSize: 13,
-          color: isMe ? Colors.white : Colors.black87,
-        ),
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-    );
-  }
-}
-
-class _ReplyPreview extends StatelessWidget {
-  final Map<String, dynamic> message;
-  final VoidCallback onCancel;
-  final Map<String, dynamic>? Function(String id) getMessageById;
-
-  const _ReplyPreview({
-    required this.message,
-    required this.onCancel,
-    required this.getMessageById,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final content = message['content'] ?? '';
-    final type = message['type'] ?? 'text';
-    final preview = type == 'text'
-        ? content
-        : type == 'image'
-        ? '📷 Photo'
-        : type == 'voice'
-        ? '🎤 Voice message'
-        : type == 'video'
-        ? '🎬 Video'
-        : type == 'music'
-        ? '🎵 Music'
-        : '📎 Attachment';
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade200,
-        borderRadius: BorderRadius.circular(8),
-        border: const Border(
-          left: BorderSide(color: Color(0xFF6D5BFF), width: 4),
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              preview.length > 40 ? preview.substring(0, 40) + '...' : preview,
-              style: const TextStyle(fontSize: 13, color: Colors.black87),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.close, color: Colors.red, size: 18),
-            onPressed: onCancel,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-          ),
-        ],
-      ),
     );
   }
 }

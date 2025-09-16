@@ -234,23 +234,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
     }
   }
 
-  Future<void> _markReceivedMessagesAsSeen() async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null || _groupId == null) return;
-    try {
-      await Supabase.instance.client
-          .from('messages')
-          .update({
-            'is_seen': true,
-            'last_seen': DateTime.now().toUtc().toIso8601String(),
-          })
-          .eq('group_id', _groupId)
-          .neq('sender_id', user.id)  // Don't mark own messages as seen
-          .eq('is_seen', false);
-    } catch (e) {
-      // Handle error silently like in private chat
-    }
-  }
+  
 
   Future<void> _fetchMessages() async {
     if (mounted) setState(() => _isLoading = true);

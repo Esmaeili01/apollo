@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'settings.dart';
 import 'search.dart';
 import 'contacts.dart';
-import 'private_chat.dart';
+import 'private_chat/private_chat.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'group_create.dart';
 import 'group_chat.dart';
