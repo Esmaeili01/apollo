@@ -16,11 +16,21 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
   List<Map<String, dynamic>> _members = [];
   bool _isLoading = true;
   int _currentUserRole = 0; // 0: Member, 1: Admin, 2: Owner
+  RealtimeChannel? _groupSub;
+  Map<String, dynamic> _groupInfo = {};
+  
+  // Check if current user can add members (only applies to role 0 - members)
+  bool get _canAddMembers {
+    if (_currentUserRole >= 1) return true; // Admins and owners can always add members
+    return _groupInfo['can_add_members'] ?? true;
+  }
 
   @override
   void initState() {
     super.initState();
+    _groupInfo = Map<String, dynamic>.from(widget.group);
     _fetchMembers();
+    _subscribeToGroupUpdates();
   }
 
   Future<void> _fetchMembers() async {
@@ -50,9 +60,10 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
         _members = (response as List).map((member) {
           final profile = member['profiles'] as Map<String, dynamic>;
           final role = member['role'] as int? ?? 0;
+          final memberId = member['user_id'];
           
           // Check if this is the current user to get their role
-          if (member['user_id'] == currentUserId) {
+          if (memberId == currentUserId) {
             userRole = role;
           }
           
@@ -108,40 +119,141 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
   }
 
   Future<void> _removeMember(String userId) async {
+    if (!mounted) return;
+    
+    // Validate user permissions
+    final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+    
+    if (currentUserId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You must be logged in to remove members'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    
+    // Prevent removing yourself
+    if (userId == currentUserId) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You cannot remove yourself from the group'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    
+    // Find the member being removed
+    final memberToRemove = _members.firstWhere(
+      (m) => m['user_id'] == userId,
+      orElse: () => {},
+    );
+    
+    if (memberToRemove.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Member not found'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    
+    // Validate permission to remove this specific member
+    final memberRole = memberToRemove['role'] as int? ?? 0;
+    final canRemove = _currentUserRole == 2 || 
+                     (_currentUserRole == 1 && memberRole == 0);
+    
+    if (!canRemove) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You do not have permission to remove this member'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    
     try {
+      setState(() => _isLoading = true);
+      
+      // Remove from database
       await Supabase.instance.client
           .from('group_members')
           .delete()
           .eq('group_id', widget.group['id'])
           .eq('user_id', userId);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Member removed successfully')),
-      );
-      await _fetchMembers();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${memberToRemove['name']} removed successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        await _fetchMembers();
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to remove member: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to remove ${memberToRemove['name']}: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
   Future<void> _changeRole(String userId, int newRole) async {
+    
+    if (!mounted) return;
+    
+    // Basic validation
+    final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+    if (currentUserId == null) return;
+    if (userId == currentUserId) return; // Can't change own role
+    
+    // Find member name for feedback
+    final memberToChange = _members.firstWhere(
+      (m) => m['user_id'] == userId,
+      orElse: () => {'name': 'Unknown'},
+    );
+    final memberName = memberToChange['name'] as String? ?? 'Unknown';
+    
     try {
+      // Simple database update
       await Supabase.instance.client
           .from('group_members')
           .update({'role': newRole})
           .eq('group_id', widget.group['id'])
           .eq('user_id', userId);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Role updated successfully')),
-      );
-      await _fetchMembers();
+      
+      if (mounted) {
+        final message = newRole == 1 ? '$memberName promoted to Admin' : '$memberName demoted to Member';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.green,
+          ),
+        );
+        await _fetchMembers();
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to update role: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update $memberName\'s role'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -153,7 +265,7 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
     // Only owners and admins can manage members
     if (_currentUserRole < 1 || isCurrentUser) return;
     
-    // Owners can manage all, Admins can only manage regular members
+    // Owners can manage everyone, Admins can only manage regular members (role 0)
     final canManage = _currentUserRole == 2 || 
                      (_currentUserRole == 1 && memberRole == 0);
     
@@ -175,25 +287,44 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                 ),
               ),
             ),
-            if (_currentUserRole == 2 || memberRole == 0) ...[
+            // Show promotion/demotion option only for owners
+            if (_currentUserRole == 2) ...[
+              // This should only show for owners (role 2)
               ListTile(
-                leading: const Icon(Icons.admin_panel_settings),
-                title: Text(memberRole == 1 ? 'Remove Admin' : 'Promote to Admin'),
+                leading: Icon(
+                  memberRole == 1 ? Icons.remove_moderator : Icons.admin_panel_settings,
+                  color: memberRole == 1 ? Colors.orange : Colors.blue,
+                ),
+                title: Text(
+                  memberRole == 1 ? 'Remove Admin' : 'Promote to Admin',
+                  style: TextStyle(
+                    color: memberRole == 1 ? Colors.orange : Colors.blue,
+                  ),
+                ),
+                subtitle: Text(
+                  memberRole == 1 
+                      ? 'Demote to regular member' 
+                      : 'Give admin privileges',
+                  style: const TextStyle(fontSize: 12),
+                ),
                 onTap: () {
                   Navigator.pop(context);
-                  _changeRole(member['user_id'], memberRole == 1 ? 0 : 1);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.person_remove, color: Colors.red),
-                title: const Text('Remove from Group', 
-                                style: TextStyle(color: Colors.red)),
-                onTap: () {
-                  Navigator.pop(context);
-                  _showRemoveConfirmation(member);
+                  // Direct role change - promote to admin (role = 1) or demote to member (role = 0)
+                  final newRole = memberRole == 1 ? 0 : 1;
+                  _changeRole(member['user_id'], newRole);
                 },
               ),
             ],
+            // Show remove option for both owners and admins (this should always show)
+            ListTile(
+              leading: const Icon(Icons.person_remove, color: Colors.red),
+              title: const Text('Remove from Group', 
+                              style: TextStyle(color: Colors.red)),
+              onTap: () {
+                Navigator.pop(context);
+                _showRemoveConfirmation(member);
+              },
+            ),
           ],
         ),
       ),
@@ -226,12 +357,13 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
     );
   }
 
+
   @override
   Widget build(BuildContext context) {
-    final avatarUrl = widget.group['avatar_url'] as String?;
-    final name = widget.group['name'] as String? ?? 'Group';
-    final bio = widget.group['bio'] as String? ?? '';
-    final isPublic = widget.group['is_public'] == true;
+    final avatarUrl = _groupInfo['avatar_url'] as String? ?? widget.group['avatar_url'] as String?;
+    final name = _groupInfo['name'] as String? ?? widget.group['name'] as String? ?? 'Group';
+    final bio = _groupInfo['bio'] as String? ?? widget.group['bio'] as String? ?? '';
+    final isPublic = (_groupInfo['is_public'] ?? widget.group['is_public']) == true;
     final creatorId = widget.group['creator_id'] as String?;
     final inviteLink = widget.group['invite_link'] as String?;
 
@@ -441,14 +573,22 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                                   context,
                                   MaterialPageRoute(
                                     builder: (context) => GroupManagePage(
-                                      group: widget.group,
+                                      group: _groupInfo.isNotEmpty ? _groupInfo : widget.group,
                                       currentUserRole: _currentUserRole,
                                     ),
                                   ),
                                 );
                                 // If changes were made, refresh the data
-                                if (result == true) {
+                                if (result != null) {
                                   await _fetchMembers();
+                                  // If group data was returned, update our local state and pass it back to parent
+                                  if (result is Map<String, dynamic>) {
+                                    setState(() {
+                                      _groupInfo = result;
+                                    });
+                                    // Return the updated data to the group chat page
+                                    Navigator.of(context).pop(result);
+                                  }
                                 }
                               },
                               tooltip: 'Manage Group',
@@ -490,64 +630,96 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                               ),
                             ),
                             const SizedBox(height: 8),
-                            // Add Member button (full width)
-                            GestureDetector(
-                              onTap: () async {
-                                // Show modal with selectable contacts
-                                await showModalBottomSheet(
-                                  context: context,
-                                  shape: const RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.vertical(
-                                      top: Radius.circular(24),
-                                    ),
-                                  ),
-                                  isScrollControlled: true,
-                                  builder: (context) {
-                                    return _AddMemberSheet(
-                                      groupId: widget.group['id'],
-                                      currentMemberIds: _members
-                                          .map((m) => m['user_id'] as String)
-                                          .toList(),
-                                      onMemberAdded: () async {
-                                        Navigator.of(context).pop();
-                                        await _fetchMembers();
-                                      },
-                                    );
-                                  },
-                                );
-                              },
-                              child: Container(
-                                width: double.infinity, // Full width
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                  horizontal: 16,
-                                ),
-                                margin: const EdgeInsets.only(bottom: 12),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF6D5BFF),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: const [
-                                    Icon(
-                                      Icons.person_add,
-                                      color: Colors.white,
-                                      size: 20,
-                                    ),
-                                    SizedBox(width: 8),
-                                    Text(
-                                      'Add Member',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 16,
+                            // Add Member button (full width) - with permission check
+                            _canAddMembers
+                                ? GestureDetector(
+                                    onTap: () async {
+                                      // Show modal with selectable contacts
+                                      await showModalBottomSheet(
+                                        context: context,
+                                        shape: const RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.vertical(
+                                            top: Radius.circular(24),
+                                          ),
+                                        ),
+                                        isScrollControlled: true,
+                                        builder: (context) {
+                                          return _AddMemberSheet(
+                                            groupId: widget.group['id'],
+                                            currentMemberIds: _members
+                                                .map((m) => m['user_id'] as String)
+                                                .toList(),
+                                            onMemberAdded: () async {
+                                              Navigator.of(context).pop();
+                                              await _fetchMembers();
+                                            },
+                                          );
+                                        },
+                                      );
+                                    },
+                                    child: Container(
+                                      width: double.infinity, // Full width
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 12,
+                                        horizontal: 16,
+                                      ),
+                                      margin: const EdgeInsets.only(bottom: 12),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF6D5BFF),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: const [
+                                          Icon(
+                                            Icons.person_add,
+                                            color: Colors.white,
+                                            size: 20,
+                                          ),
+                                          SizedBox(width: 8),
+                                          Text(
+                                            'Add Member',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 16,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                  ],
-                                ),
-                              ),
-                            ),
+                                  )
+                                : Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                      horizontal: 16,
+                                    ),
+                                    margin: const EdgeInsets.only(bottom: 12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey[400],
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.block,
+                                          color: Colors.grey[600],
+                                          size: 20,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'No Permission to Add Members',
+                                          style: TextStyle(
+                                            color: Colors.grey[600],
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                             ..._members.map(
                               (m) => Padding(
                                 padding: const EdgeInsets.symmetric(
@@ -575,7 +747,7 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                                     );
                                   },
                                   onLongPress: () {
-                                    // Show context menu for owners and admins only
+                                    // Show context menu for owners and admins
                                     if (_currentUserRole >= 1) {
                                       _showMemberOptions(m);
                                     }
@@ -637,35 +809,42 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                                             ],
                                           ),
                                         ),
-                                        // Only show role badge for admins (1) and owners (2), not members (0)
-                                        if (m['role_text'] != null && m['role'] > 0)
-                                          Padding(
-                                            padding: const EdgeInsets.only(
-                                              left: 8.0,
-                                            ),
-                                            child: Container(
-                                              padding: const EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 2,
-                                              ),
-                                              decoration: BoxDecoration(
-                                                color: m['role'] == 2 
-                                                    ? Colors.orange.shade100
-                                                    : Colors.blue.shade100, // Only admin or owner
-                                                borderRadius: BorderRadius.circular(12),
-                                              ),
-                                              child: Text(
-                                                m['role_text'],
-                                                style: TextStyle(
-                                                  fontSize: 11,
-                                                  color: m['role'] == 2 
-                                                      ? Colors.orange.shade700
-                                                      : Colors.blue.shade700, // Only admin or owner
-                                                  fontWeight: FontWeight.w600,
+                                        // Role badge and management indicator
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            // Show role badge for admins (1) and owners (2), not members (0)
+                                            if (m['role_text'] != null && m['role'] > 0)
+                                              Padding(
+                                                padding: const EdgeInsets.only(
+                                                  right: 8.0,
+                                                ),
+                                                child: Container(
+                                                  padding: const EdgeInsets.symmetric(
+                                                    horizontal: 8,
+                                                    vertical: 2,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: m['role'] == 2 
+                                                        ? Colors.orange.shade100
+                                                        : Colors.blue.shade100,
+                                                    borderRadius: BorderRadius.circular(12),
+                                                  ),
+                                                  child: Text(
+                                                    m['role_text'],
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      color: m['role'] == 2 
+                                                          ? Colors.orange.shade700
+                                                          : Colors.blue.shade700,
+                                                      fontWeight: FontWeight.w600,
+                                                    ),
+                                                  ),
                                                 ),
                                               ),
-                                            ),
-                                          ),
+                                            // Management icon removed - using long press only
+                                          ],
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -683,6 +862,36 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _groupSub?.unsubscribe();
+    super.dispose();
+  }
+
+  void _subscribeToGroupUpdates() {
+    if (widget.group['id'] == null) return;
+    
+    final channelName = 'group-updates-${widget.group['id']}';
+    _groupSub = Supabase.instance.client.channel(channelName)
+      ..on(
+        RealtimeListenTypes.postgresChanges,
+        ChannelFilter(event: 'UPDATE', schema: 'public', table: 'groups'),
+        (payload, [ref]) {
+          final updatedGroup = payload['new'] as Map<String, dynamic>;
+          if (updatedGroup['id'] == widget.group['id'] && mounted) {
+            setState(() {
+              // Update the group info with the new data
+              _groupInfo = Map<String, dynamic>.from(_groupInfo)
+                ..addAll(updatedGroup);
+            });
+            // If this is a significant update (permissions changed), we might want to
+            // notify the parent page, but for now real-time updates in chat page handle this
+          }
+        },
+      );
+    _groupSub?.subscribe();
   }
 }
 

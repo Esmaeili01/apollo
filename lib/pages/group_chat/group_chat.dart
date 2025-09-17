@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'group_profile.dart';
+import '../home.dart';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -31,6 +32,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
   String? _groupId;
   bool _sending = false;
   RealtimeChannel? _messagesSub;
+  RealtimeChannel? _groupSub;
   // RealtimeChannel? _profilesSub;
   Map<String, dynamic>? _editingMessage;
   Map<String, dynamic>? _replyToMessage;
@@ -42,6 +44,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
       if (mounted && _groupId != null) {
         currentOpenGroupChatId = _groupId;
         _subscribeToMessages();  // Move subscription here after group ID is set
+        _subscribeToGroupUpdates();  // Subscribe to group updates
         // _subscribeToProfiles();
       }
     });
@@ -78,6 +81,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
     _editController.dispose();
     _scrollController.dispose();
     _messagesSub?.unsubscribe();
+    _groupSub?.unsubscribe();
     // _profilesSub?.unsubscribe();
     super.dispose();
   }
@@ -300,13 +304,19 @@ class _GroupChatPageState extends State<GroupChatPage> {
     }
   }
 
-  void _showGroupProfile() {
-    Navigator.push(
+  void _showGroupProfile() async {
+    final result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => GroupProfilePage(group: _groupInfo),
       ),
     );
+    // If the group data was updated in profile or manage pages, refresh our local data
+    if (result != null && result is Map<String, dynamic>) {
+      setState(() {
+        _groupInfo = result;
+      });
+    }
   }
 
   Future<void> _leaveGroup() async {
@@ -349,6 +359,20 @@ class _GroupChatPageState extends State<GroupChatPage> {
     return member['role'] as int?;
   }
 
+  // Check if current user can send messages (only applies to role 0 - members)
+  bool get _canSendMessage {
+    final role = _currentUserRole;
+    if (role == null || role >= 1) return true; // Admins and owners can always send messages
+    return _groupInfo['can_send_message'] ?? true;
+  }
+
+  // Check if current user can send media (only applies to role 0 - members)
+  bool get _canSendMedia {
+    final role = _currentUserRole;
+    if (role == null || role >= 1) return true; // Admins and owners can always send media
+    return _groupInfo['can_send_media'] ?? true;
+  }
+
   // Delete group and all memberships
   Future<void> _deleteGroup() async {
     if (_groupId == null) return;
@@ -359,11 +383,15 @@ class _GroupChatPageState extends State<GroupChatPage> {
           .eq('group_id', _groupId);
       await Supabase.instance.client.from('groups').delete().eq('id', _groupId);
       if (mounted) {
-        Navigator.of(context).pop(); // Pop the dialog
-        Navigator.of(context).pop(); // Pop the group chat page
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('Group deleted.')));
+        
+        // Navigate to home page after deletion
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const HomePage()),
+          (route) => false,
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -444,6 +472,17 @@ class _GroupChatPageState extends State<GroupChatPage> {
   }
 
   Future<void> _handleAttachFile() async {
+    // Check if user has permission to send media
+    if (!_canSendMedia) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You do not have permission to send media in this group.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    
     final result = await FilePicker.platform.pickFiles(withData: true);
     if (result == null || result.files.isEmpty) return;
 
@@ -508,6 +547,17 @@ class _GroupChatPageState extends State<GroupChatPage> {
         const SnackBar(
           content: Text('Voice recording is only available on the web.'),
           backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    
+    // Check if user has permission to send media
+    if (!_canSendMedia) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You do not have permission to send voice messages in this group.'),
+          backgroundColor: Colors.red,
         ),
       );
       return;
@@ -762,6 +812,27 @@ void _subscribeToMessages() {
   _messagesSub?.subscribe();
 }
 
+void _subscribeToGroupUpdates() {
+  if (_groupId == null) return;
+  
+  final channelName = 'group-updates-$_groupId';
+  _groupSub = Supabase.instance.client.channel(channelName)
+    ..on(
+      RealtimeListenTypes.postgresChanges,
+      ChannelFilter(event: 'UPDATE', schema: 'public', table: 'groups'),
+      (payload, [ref]) {
+        final updatedGroup = payload['new'] as Map<String, dynamic>;
+        if (updatedGroup['id'] == _groupId && mounted) {
+          setState(() {
+            // Update the group info with the new data
+            _groupInfo = Map<String, dynamic>.from(_groupInfo)
+              ..addAll(updatedGroup);
+          });
+        }
+      },
+    );
+  _groupSub?.subscribe();
+}
 
   // void _subscribeToProfiles() {
   //   _profilesSub = Supabase.instance.client.channel('profiles-channel').on(
@@ -791,6 +862,18 @@ void _subscribeToMessages() {
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
+    
+    // Check if user has permission to send messages
+    if (!_canSendMessage) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You do not have permission to send messages in this group.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    
     setState(() => _sending = true);
 
     final user = Supabase.instance.client.auth.currentUser;
@@ -1049,32 +1132,59 @@ void _subscribeToMessages() {
                 child: Row(
                   children: [
                     IconButton(
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.attach_file,
-                        color: Color(0xFF6D5BFF),
+                        color: (_sending || !_canSendMedia) 
+                            ? Colors.grey[400] 
+                            : const Color(0xFF6D5BFF),
                       ),
-                      onPressed: _sending ? null : _handleAttachFile,
+                      onPressed: (_sending || !_canSendMedia) 
+                          ? null 
+                          : _handleAttachFile,
+                      tooltip: !_canSendMedia
+                          ? 'No permission to send media'
+                          : 'Attach file',
                     ),
-                    Expanded(
-                      child: TextField(
-                        controller: _messageController,
-                        minLines: 1,
-                        maxLines: 5,
-                        decoration: const InputDecoration.collapsed(
-                          hintText: 'Message',
-                        ),
-                        onSubmitted: _sending ? null : (_) => _sendMessage(),
-                      ),
-                    ),
+                    !_canSendMessage
+                        ? Expanded(
+                            child: Container(
+                              alignment: Alignment.centerLeft,
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              child: Text(
+                                'You do not have permission to send messages in this group.',
+                                style: TextStyle(
+                                  color: Colors.red[600],
+                                  fontStyle: FontStyle.italic,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                          )
+                        : Expanded(
+                            child: TextField(
+                              controller: _messageController,
+                              minLines: 1,
+                              maxLines: 5,
+                              decoration: const InputDecoration.collapsed(
+                                hintText: 'Message',
+                              ),
+                              onSubmitted: _sending ? null : (_) => _sendMessage(),
+                              enabled: !_sending,
+                            ),
+                          ),
                     IconButton(
                       icon: Icon(
                         Icons.mic,
-                        color: kIsWeb ? const Color(0xFF6D5BFF) : Colors.grey,
+                        color: (_sending || !_canSendMedia || !kIsWeb) 
+                            ? Colors.grey[400] 
+                            : const Color(0xFF6D5BFF),
                       ),
-                      onPressed: _sending || !kIsWeb
+                      onPressed: (_sending || !kIsWeb || !_canSendMedia)
                           ? null
                           : _handleRecordVoice,
-                      tooltip: kIsWeb
+                      tooltip: !_canSendMedia
+                          ? 'No permission to send voice messages'
+                          : kIsWeb
                           ? 'Record voice'
                           : 'Voice recording web-only',
                     ),
@@ -1087,8 +1197,18 @@ void _subscribeToMessages() {
                                 strokeWidth: 2.5,
                               ),
                             )
-                          : const Icon(Icons.send, color: Color(0xFF6D5BFF)),
-                      onPressed: _sending ? null : _sendMessage,
+                          : Icon(
+                              Icons.send, 
+                              color: (_sending || !_canSendMessage)
+                                  ? Colors.grey[400]
+                                  : const Color(0xFF6D5BFF),
+                            ),
+                      onPressed: (_sending || !_canSendMessage) 
+                          ? null 
+                          : _sendMessage,
+                      tooltip: !_canSendMessage
+                          ? 'No permission to send messages'
+                          : 'Send message',
                     ),
                   ],
                 ),

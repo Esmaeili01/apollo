@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
+import '../home.dart';
 
 class GroupManagePage extends StatefulWidget {
   final Map<String, dynamic> group;
@@ -24,8 +27,11 @@ class _GroupManagePageState extends State<GroupManagePage> {
   bool _isPublic = false;
   bool _isLoading = false;
   List<Map<String, dynamic>> _ownersAndAdmins = [];
-  File? _avatarFile;
+  XFile? _avatarFile;
+  Uint8List? _avatarBytes;
   bool _picking = false;
+  RealtimeChannel? _groupSub;
+  Map<String, dynamic> _groupData = {};
   
   // Permission settings for simple members
   bool _canSendMessage = true;
@@ -35,8 +41,10 @@ class _GroupManagePageState extends State<GroupManagePage> {
   @override
   void initState() {
     super.initState();
+    _groupData = Map<String, dynamic>.from(widget.group);
     _initializeData();
     _fetchOwnersAndAdmins();
+    _subscribeToGroupUpdates();
   }
 
   void _initializeData() {
@@ -109,9 +117,27 @@ class _GroupManagePageState extends State<GroupManagePage> {
       imageQuality: 80,
     );
     if (picked != null) {
-      setState(() {
-        _avatarFile = File(picked.path);
-      });
+      final bytes = await picked.readAsBytes();
+      if (bytes.length > 2 * 1024 * 1024) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Avatar must be less than 2MB.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _picking = false);
+        return;
+      }
+      if (kIsWeb) {
+        setState(() {
+          _avatarFile = picked;
+          _avatarBytes = bytes;
+        });
+      } else {
+        setState(() {
+          _avatarFile = picked;
+        });
+      }
     }
     setState(() => _picking = false);
   }
@@ -122,25 +148,30 @@ class _GroupManagePageState extends State<GroupManagePage> {
     });
   }
 
-  Future<String?> _uploadAvatar(File avatarFile, String groupId) async {
+  Future<String?> _uploadAvatar(XFile picked, String groupId) async {
     try {
-      final fileExt = avatarFile.path.split('.').last;
+      print('Starting avatar upload for group: $groupId');
+      final fileExt = picked.path.split('.').last;
       final fileName = 'group_avatar_$groupId.$fileExt';
+      print('Upload filename: $fileName');
+      
       final storage = Supabase.instance.client.storage.from('avatars');
-
+      final bytes = await picked.readAsBytes();
+      
+      print('Uploading file...');
       final res = await storage.uploadBinary(
         fileName,
-        await avatarFile.readAsBytes(),
+        bytes,
         fileOptions: const FileOptions(upsert: true),
       );
-
-      if (res.isNotEmpty) {
-        final publicUrl = storage.getPublicUrl(fileName);
-        return publicUrl;
-      }
-      return null;
+      
+      print('File uploaded successfully');
+      final publicUrl = storage.getPublicUrl(fileName);
+      print('Public URL: $publicUrl');
+      return publicUrl;
     } catch (e) {
       print('Error uploading avatar: $e');
+      print('Error type: ${e.runtimeType}');
       return null;
     }
   }
@@ -153,7 +184,21 @@ class _GroupManagePageState extends State<GroupManagePage> {
       // Upload avatar if selected
       String? avatarUrl = widget.group['avatar_url'];
       if (_avatarFile != null) {
-        avatarUrl = await _uploadAvatar(_avatarFile!, widget.group['id']);
+        try {
+          avatarUrl = await _uploadAvatar(_avatarFile!, widget.group['id']);
+          if (avatarUrl == null) {
+            throw Exception('Failed to upload avatar');
+          }
+        } catch (e) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to upload avatar: $e'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          // Keep the old avatar URL if upload fails
+          avatarUrl = widget.group['avatar_url'];
+        }
       }
 
       await Supabase.instance.client
@@ -172,7 +217,23 @@ class _GroupManagePageState extends State<GroupManagePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Group updated successfully')),
       );
-      Navigator.pop(context, true); // Return true to indicate changes were made
+      
+      // Create updated group data to pass back
+      final updatedGroup = Map<String, dynamic>.from(_groupData);
+      updatedGroup.addAll({
+        'name': _nameController.text.trim(),
+        'bio': _bioController.text.trim(),
+        'is_public': _isPublic,
+        'avatar_url': avatarUrl,
+        'can_send_message': _canSendMessage,
+        'can_send_media': _canSendMedia,
+        'can_add_members': _canAddMembers,
+      });
+      
+      // Update our local group data too
+      _groupData = updatedGroup;
+      
+      Navigator.pop(context, updatedGroup); // Return updated group data
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to update group: $e')),
@@ -326,28 +387,41 @@ class _GroupManagePageState extends State<GroupManagePage> {
 
   Future<void> _deleteGroup() async {
     try {
-      // Delete group members first
+      // Delete group messages first (messages table references group_id)
+      await Supabase.instance.client
+          .from('messages')
+          .delete()
+          .eq('group_id', widget.group['id']);
+
+      // Delete group members second (group_members table references group_id)
       await Supabase.instance.client
           .from('group_members')
           .delete()
           .eq('group_id', widget.group['id']);
 
-      // Delete the group
+      // Delete the group last (parent table)
       await Supabase.instance.client
           .from('groups')
           .delete()
           .eq('id', widget.group['id']);
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Group deleted successfully')),
-      );
-      
-      // Navigate back to groups list or main page
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Group deleted successfully')),
+        );
+        
+        // Navigate to home page after deletion
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const HomePage()),
+          (route) => false,
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to delete group: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete group: $e')),
+        );
+      }
     }
   }
 
@@ -355,7 +429,11 @@ class _GroupManagePageState extends State<GroupManagePage> {
   Widget build(BuildContext context) {
     ImageProvider? avatarImage;
     if (_avatarFile != null) {
-      avatarImage = FileImage(_avatarFile!);
+      if (kIsWeb && _avatarBytes != null) {
+        avatarImage = MemoryImage(_avatarBytes!);
+      } else if (!kIsWeb) {
+        avatarImage = FileImage(File(_avatarFile!.path));
+      }
     } else if (widget.group['avatar_url'] != null && widget.group['avatar_url'].isNotEmpty) {
       avatarImage = NetworkImage(widget.group['avatar_url']);
     }
@@ -635,10 +713,11 @@ class _GroupManagePageState extends State<GroupManagePage> {
                             subtitle: Text(roleText),
                             trailing: isCurrentUser
                                 ? const Text('You', style: TextStyle(color: Color(0xFF6D5BFF), fontWeight: FontWeight.w600))
-                                : (widget.currentUserRole >= 1 && member['role'] < widget.currentUserRole)
+                                : (widget.currentUserRole == 2 && member['role'] == 1)
                                     ? IconButton(
-                                        icon: const Icon(Icons.more_vert),
-                                        onPressed: () => _showMemberOptions(member),
+                                        icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                        onPressed: () => _demoteAdmin(member),
+                                        tooltip: 'Demote to Member',
                                       )
                                     : null,
                             contentPadding: EdgeInsets.zero,
@@ -696,10 +775,75 @@ class _GroupManagePageState extends State<GroupManagePage> {
     );
   }
 
+  Future<void> _demoteAdmin(Map<String, dynamic> member) async {
+    final memberName = member['name'] as String? ?? 'Unknown';
+    final userId = member['user_id'] as String;
+    
+    print('Demoting admin: $memberName ($userId)');
+    
+    try {
+      // Update role to 0 (Member) in database
+      await Supabase.instance.client
+          .from('group_members')
+          .update({'role': 0})
+          .eq('group_id', widget.group['id'])
+          .eq('user_id', userId);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$memberName demoted to Member'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        await _fetchOwnersAndAdmins(); // Refresh the list
+      }
+    } catch (e) {
+      print('Failed to demote admin: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to demote $memberName'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _subscribeToGroupUpdates() {
+    if (widget.group['id'] == null) return;
+    
+    final channelName = 'group-updates-${widget.group['id']}';
+    _groupSub = Supabase.instance.client.channel(channelName)
+      ..on(
+        RealtimeListenTypes.postgresChanges,
+        ChannelFilter(event: 'UPDATE', schema: 'public', table: 'groups'),
+        (payload, [ref]) {
+          final updatedGroup = payload['new'] as Map<String, dynamic>;
+          if (updatedGroup['id'] == widget.group['id'] && mounted) {
+            setState(() {
+              // Update local group data
+              _groupData.addAll(updatedGroup);
+              // Update form fields with new data
+              _nameController.text = updatedGroup['name'] ?? _nameController.text;
+              _bioController.text = updatedGroup['bio'] ?? _bioController.text;
+              _isPublic = updatedGroup['is_public'] ?? _isPublic;
+              _canSendMessage = updatedGroup['can_send_message'] ?? _canSendMessage;
+              _canSendMedia = updatedGroup['can_send_media'] ?? _canSendMedia;
+              _canAddMembers = updatedGroup['can_add_members'] ?? _canAddMembers;
+            });
+          }
+        },
+      );
+    _groupSub?.subscribe();
+  }
+
   @override
   void dispose() {
     _nameController.dispose();
     _bioController.dispose();
+    _groupSub?.unsubscribe();
     super.dispose();
   }
 }

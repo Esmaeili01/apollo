@@ -3,6 +3,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'group_chat.dart';
 
 class GroupCreate extends StatefulWidget {
@@ -18,9 +20,11 @@ class _GroupCreateState extends State<GroupCreate> {
   final TextEditingController _bioController = TextEditingController();
   final TextEditingController _linkController = TextEditingController();
   bool _isPublic = true;
-  File? _avatarFile;
+  XFile? _avatarFile;
+  Uint8List? _avatarBytes;
   bool _picking = false;
   String _randomLink = '';
+  String? _avatarFileExtension;
 
   @override
   void initState() {
@@ -83,9 +87,27 @@ class _GroupCreateState extends State<GroupCreate> {
       imageQuality: 80,
     );
     if (picked != null) {
-      setState(() {
-        _avatarFile = File(picked.path);
-      });
+      final bytes = await picked.readAsBytes();
+      if (bytes.length > 2 * 1024 * 1024) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Avatar must be less than 2MB.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _picking = false);
+        return;
+      }
+      if (kIsWeb) {
+        setState(() {
+          _avatarFile = picked;
+          _avatarBytes = bytes;
+        });
+      } else {
+        setState(() {
+          _avatarFile = picked;
+        });
+      }
     }
     setState(() => _picking = false);
   }
@@ -118,25 +140,30 @@ class _GroupCreateState extends State<GroupCreate> {
     }
   }
 
-  Future<String?> _uploadAvatar(File avatarFile, String groupId) async {
+  Future<String?> _uploadAvatar(XFile picked, String groupId) async {
     try {
-      final fileExt = avatarFile.path.split('.').last;
+      print('Starting avatar upload for group: $groupId');
+      final fileExt = picked.path.split('.').last;
       final fileName = 'group_avatar_$groupId.$fileExt';
+      print('Upload filename: $fileName');
+      
       final storage = Supabase.instance.client.storage.from('avatars');
-
+      final bytes = await picked.readAsBytes();
+      
+      print('Uploading file...');
       final res = await storage.uploadBinary(
         fileName,
-        await avatarFile.readAsBytes(),
+        bytes,
         fileOptions: const FileOptions(upsert: true),
       );
-
-      if (res.isNotEmpty) {
-        final publicUrl = storage.getPublicUrl(fileName);
-        return publicUrl;
-      }
-      return null;
+      
+      print('File uploaded successfully');
+      final publicUrl = storage.getPublicUrl(fileName);
+      print('Public URL: $publicUrl');
+      return publicUrl;
     } catch (e) {
       print('Error uploading avatar: $e');
+      print('Error type: ${e.runtimeType}');
       return null;
     }
   }
@@ -152,16 +179,7 @@ class _GroupCreateState extends State<GroupCreate> {
           throw Exception('User not authenticated');
         }
 
-        // Upload avatar if selected
-        String? avatarUrl;
-        if (_avatarFile != null) {
-          avatarUrl = await _uploadAvatar(
-            _avatarFile!,
-            'temp_${DateTime.now().millisecondsSinceEpoch}',
-          );
-        }
-
-        // Generate unique invite link
+        // Generate unique invite link first
         String inviteLink;
         if (_isPublic) {
           final customLink = _linkController.text.trim();
@@ -176,11 +194,10 @@ class _GroupCreateState extends State<GroupCreate> {
           inviteLink = await _generateUniqueInviteLink();
         }
 
-        // Create group data object matching the database schema
+        // Create group data object without avatar first
         final groupData = {
           'name': _nameController.text.trim(),
           'bio': _bioController.text.trim(),
-          'avatar_url': avatarUrl,
           'creator_id': user.id,
           'can_send_message': true,
           'can_send_media': true,
@@ -196,6 +213,28 @@ class _GroupCreateState extends State<GroupCreate> {
                 .insert(groupData)
                 .select()
                 .single();
+
+        // Upload avatar after group creation if selected
+        String? avatarUrl;
+        if (_avatarFile != null) {
+          try {
+            avatarUrl = await _uploadAvatar(_avatarFile!, groupResponse['id']);
+            
+            // Update group with avatar URL
+            if (avatarUrl != null) {
+              await Supabase.instance.client
+                  .from('groups')
+                  .update({'avatar_url': avatarUrl})
+                  .eq('id', groupResponse['id']);
+              
+              // Update the response object with the avatar URL
+              groupResponse['avatar_url'] = avatarUrl;
+            }
+          } catch (e) {
+            print('Failed to upload avatar, but group created: $e');
+            // Continue with group creation even if avatar upload fails
+          }
+        }
 
         print('Group created with ID: ${groupResponse['id']}');
         print('User ID: ${user.id}');
@@ -248,7 +287,11 @@ class _GroupCreateState extends State<GroupCreate> {
   Widget build(BuildContext context) {
     ImageProvider? avatarImage;
     if (_avatarFile != null) {
-      avatarImage = FileImage(_avatarFile!);
+      if (kIsWeb && _avatarBytes != null) {
+        avatarImage = MemoryImage(_avatarBytes!);
+      } else if (!kIsWeb) {
+        avatarImage = FileImage(File(_avatarFile!.path));
+      }
     }
 
     Widget avatarChild;
