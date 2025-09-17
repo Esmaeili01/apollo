@@ -1446,37 +1446,8 @@ class _GroupMessageBubble extends StatelessWidget {
       2 => 'Owner',
       _ => null,
     };
-    final nameRow = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          senderName,
-          style: TextStyle(
-            color: isMe ? Colors.white : Colors.black87,
-            fontWeight: FontWeight.bold,
-            fontSize: 14,
-          ),
-        ),
-        if (senderRoleText != null) ...[
-          const SizedBox(width: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: senderRole == 2 ? Colors.deepPurple : Colors.blue,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              senderRoleText,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
+    // Sender name and role removed - clean message display
+    final nameRow = const SizedBox.shrink();
     return GestureDetector(
       onLongPress: () => onShowOptions?.call(message, isMe),
       child: Align(
@@ -1546,8 +1517,7 @@ class _GroupMessageBubble extends StatelessWidget {
                   : CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                nameRow,
-                const SizedBox(height: 2),
+                // nameRow removed - no sender name display
                 if (message['reply_to_id'] != null && getMessageById != null)
                   _ReplyBubblePreview(
                     repliedMessage: getMessageById!(message['reply_to_id']),

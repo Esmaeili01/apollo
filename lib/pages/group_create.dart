@@ -185,9 +185,6 @@ class _GroupCreateState extends State<GroupCreate> {
           'can_send_message': true,
           'can_send_media': true,
           'can_add_members': true,
-          'can_pin_message': true,
-          'can_change_info': true,
-          'can_delete_message': false,
           'is_public': _isPublic,
           'invite_link': inviteLink,
         };

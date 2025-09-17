@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'group_manage.dart';
+import 'user_profile.dart';
 
 class GroupProfilePage extends StatefulWidget {
   final Map<String, dynamic> group;
@@ -13,6 +15,7 @@ class GroupProfilePage extends StatefulWidget {
 class _GroupProfilePageState extends State<GroupProfilePage> {
   List<Map<String, dynamic>> _members = [];
   bool _isLoading = true;
+  int _currentUserRole = 0; // 0: Member, 1: Admin, 2: Owner
 
   @override
   void initState() {
@@ -40,10 +43,19 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
           ''')
           .eq('group_id', widget.group['id']);
 
+      final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+      int userRole = 0;
+
       setState(() {
         _members = (response as List).map((member) {
           final profile = member['profiles'] as Map<String, dynamic>;
           final role = member['role'] as int? ?? 0;
+          
+          // Check if this is the current user to get their role
+          if (member['user_id'] == currentUserId) {
+            userRole = role;
+          }
+          
           String roleText = '';
           switch (role) {
             case 0:
@@ -68,6 +80,7 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
             'last_seen': profile['last_seen'],
           };
         }).toList();
+        _currentUserRole = userRole;
       });
     } catch (e) {
       setState(() {
@@ -94,6 +107,125 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
     }
   }
 
+  Future<void> _removeMember(String userId) async {
+    try {
+      await Supabase.instance.client
+          .from('group_members')
+          .delete()
+          .eq('group_id', widget.group['id'])
+          .eq('user_id', userId);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Member removed successfully')),
+      );
+      await _fetchMembers();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to remove member: $e')),
+      );
+    }
+  }
+
+  Future<void> _changeRole(String userId, int newRole) async {
+    try {
+      await Supabase.instance.client
+          .from('group_members')
+          .update({'role': newRole})
+          .eq('group_id', widget.group['id'])
+          .eq('user_id', userId);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Role updated successfully')),
+      );
+      await _fetchMembers();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update role: $e')),
+      );
+    }
+  }
+
+  void _showMemberOptions(Map<String, dynamic> member) {
+    final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+    final isCurrentUser = member['user_id'] == currentUserId;
+    final memberRole = member['role'] as int;
+    
+    // Only owners and admins can manage members
+    if (_currentUserRole < 1 || isCurrentUser) return;
+    
+    // Owners can manage all, Admins can only manage regular members
+    final canManage = _currentUserRole == 2 || 
+                     (_currentUserRole == 1 && memberRole == 0);
+    
+    if (!canManage) return;
+
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                member['name'] ?? 'Unknown',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            if (_currentUserRole == 2 || memberRole == 0) ...[
+              ListTile(
+                leading: const Icon(Icons.admin_panel_settings),
+                title: Text(memberRole == 1 ? 'Remove Admin' : 'Promote to Admin'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _changeRole(member['user_id'], memberRole == 1 ? 0 : 1);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.person_remove, color: Colors.red),
+                title: const Text('Remove from Group', 
+                                style: TextStyle(color: Colors.red)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showRemoveConfirmation(member);
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showRemoveConfirmation(Map<String, dynamic> member) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Member'),
+        content: Text(
+          'Are you sure you want to remove ${member['name']} from the group?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _removeMember(member['user_id']);
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final avatarUrl = widget.group['avatar_url'] as String?;
@@ -101,6 +233,7 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
     final bio = widget.group['bio'] as String? ?? '';
     final isPublic = widget.group['is_public'] == true;
     final creatorId = widget.group['creator_id'] as String?;
+    final inviteLink = widget.group['invite_link'] as String?;
 
     return Scaffold(
       body: Container(
@@ -224,38 +357,40 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                                 ),
                               ),
                               const SizedBox(height: 20),
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.all(16),
-                                margin: const EdgeInsets.only(bottom: 12),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[100],
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      'Type',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 15,
-                                        color: Colors.grey,
+                              // Only show for public groups
+                              if (isPublic)
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(16),
+                                  margin: const EdgeInsets.only(bottom: 12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[100],
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Public Group',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 15,
+                                          color: Colors.grey,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      isPublic
-                                          ? 'Public Group'
-                                          : 'Private Group',
-                                      style: const TextStyle(
-                                        color: Colors.black,
-                                        fontSize: 17,
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        inviteLink != null && inviteLink.isNotEmpty
+                                            ? '@$inviteLink'
+                                            : '@no_invite_link',
+                                        style: const TextStyle(
+                                          color: Colors.black,
+                                          fontSize: 17,
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
-                              ),
                               if (bio.isNotEmpty)
                                 Container(
                                   width: double.infinity,
@@ -291,34 +426,34 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                             ],
                           ),
                         ),
-                        // Menu button at upper right corner of the card
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: PopupMenuButton<String>(
-                            icon: const Icon(
-                              Icons.more_vert,
-                              color: Colors.black54,
+                        // Management button at upper right corner of the card
+                        if (_currentUserRole >= 1)
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: IconButton(
+                              icon: const Icon(
+                                Icons.settings,
+                                color: Colors.black54,
+                              ),
+                              onPressed: () async {
+                                final result = await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => GroupManagePage(
+                                      group: widget.group,
+                                      currentUserRole: _currentUserRole,
+                                    ),
+                                  ),
+                                );
+                                // If changes were made, refresh the data
+                                if (result == true) {
+                                  await _fetchMembers();
+                                }
+                              },
+                              tooltip: 'Manage Group',
                             ),
-                            itemBuilder: (context) => [
-                              const PopupMenuItem(
-                                value: 'edit',
-                                child: Text('Edit group'),
-                              ),
-                              const PopupMenuItem(
-                                value: 'invite',
-                                child: Text('Invite members'),
-                              ),
-                              const PopupMenuItem(
-                                value: 'leave',
-                                child: Text('Leave group'),
-                              ),
-                            ],
-                            onSelected: (value) {
-                              // Handle menu actions here
-                            },
                           ),
-                        ),
                       ],
                     ),
                   ),
@@ -355,7 +490,7 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                               ),
                             ),
                             const SizedBox(height: 8),
-                            // Add Member button
+                            // Add Member button (full width)
                             GestureDetector(
                               onTap: () async {
                                 // Show modal with selectable contacts
@@ -382,30 +517,31 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                                 );
                               },
                               child: Container(
+                                width: double.infinity, // Full width
                                 padding: const EdgeInsets.symmetric(
-                                  vertical: 8,
-                                  horizontal: 12,
+                                  vertical: 12,
+                                  horizontal: 16,
                                 ),
-                                margin: const EdgeInsets.only(bottom: 8),
+                                margin: const EdgeInsets.only(bottom: 12),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFF6D5BFF),
-                                  borderRadius: BorderRadius.circular(8),
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Row(
-                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment: MainAxisAlignment.center,
                                   children: const [
                                     Icon(
                                       Icons.person_add,
                                       color: Colors.white,
                                       size: 20,
                                     ),
-                                    SizedBox(width: 6),
+                                    SizedBox(width: 8),
                                     Text(
                                       'Add Member',
                                       style: TextStyle(
                                         color: Colors.white,
                                         fontWeight: FontWeight.w600,
-                                        fontSize: 15,
+                                        fontSize: 16,
                                       ),
                                     ),
                                   ],
@@ -415,73 +551,124 @@ class _GroupProfilePageState extends State<GroupProfilePage> {
                             ..._members.map(
                               (m) => Padding(
                                 padding: const EdgeInsets.symmetric(
-                                  vertical: 8.0,
+                                  vertical: 4.0,
                                 ),
-                                child: Row(
-                                  children: [
-                                    CircleAvatar(
-                                      radius: 20,
-                                      backgroundColor: const Color(0xFF46C2CB),
-                                      backgroundImage:
-                                          m['avatar_url'] != null &&
-                                              m['avatar_url'].isNotEmpty
-                                          ? NetworkImage(m['avatar_url'])
-                                          : null,
-                                      child:
-                                          (m['avatar_url'] == null ||
-                                              m['avatar_url'].isEmpty)
-                                          ? Text(
-                                              (m['name'] ?? '?')
-                                                  .toString()
-                                                  .substring(0, 1)
-                                                  .toUpperCase(),
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            )
-                                          : null,
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            m['name'] ?? '-',
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 16,
-                                            ),
-                                          ),
-                                          if (m['last_seen'] != null)
-                                            Text(
-                                              _formatLastSeen(m['last_seen']),
-                                              style: const TextStyle(
-                                                fontSize: 13,
-                                                color: Colors.grey,
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                    if (m['role_text'] != null)
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                          left: 8.0,
-                                        ),
-                                        child: Text(
-                                          m['role_text'],
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.blueGrey,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                          textAlign: TextAlign.right,
+                                child: GestureDetector(
+                                  onTap: () {
+                                    // Navigate to user profile
+                                    final profileData = {
+                                      'id': m['user_id'],
+                                      'name': m['name'],
+                                      'username': m['username'],
+                                      'avatar_url': m['avatar_url'],
+                                      'bio': m['bio'],
+                                      'last_seen': m['last_seen'],
+                                      'is_contact': false, // We don't have this info in group context
+                                    };
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => UserProfilePage(
+                                          profile: profileData,
                                         ),
                                       ),
-                                  ],
+                                    );
+                                  },
+                                  onLongPress: () {
+                                    // Show context menu for owners and admins only
+                                    if (_currentUserRole >= 1) {
+                                      _showMemberOptions(m);
+                                    }
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 8.0,
+                                      horizontal: 4.0,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        CircleAvatar(
+                                          radius: 20,
+                                          backgroundColor: const Color(0xFF46C2CB),
+                                          backgroundImage:
+                                              m['avatar_url'] != null &&
+                                                  m['avatar_url'].isNotEmpty
+                                              ? NetworkImage(m['avatar_url'])
+                                              : null,
+                                          child:
+                                              (m['avatar_url'] == null ||
+                                                  m['avatar_url'].isEmpty)
+                                              ? Text(
+                                                  (m['name'] ?? '?')
+                                                      .toString()
+                                                      .substring(0, 1)
+                                                      .toUpperCase(),
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                )
+                                              : null,
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                m['name'] ?? '-',
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 16,
+                                                ),
+                                              ),
+                                              if (m['last_seen'] != null)
+                                                Text(
+                                                  _formatLastSeen(m['last_seen']),
+                                                  style: const TextStyle(
+                                                    fontSize: 13,
+                                                    color: Colors.grey,
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                        // Only show role badge for admins (1) and owners (2), not members (0)
+                                        if (m['role_text'] != null && m['role'] > 0)
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              left: 8.0,
+                                            ),
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 2,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: m['role'] == 2 
+                                                    ? Colors.orange.shade100
+                                                    : Colors.blue.shade100, // Only admin or owner
+                                                borderRadius: BorderRadius.circular(12),
+                                              ),
+                                              child: Text(
+                                                m['role_text'],
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: m['role'] == 2 
+                                                      ? Colors.orange.shade700
+                                                      : Colors.blue.shade700, // Only admin or owner
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),

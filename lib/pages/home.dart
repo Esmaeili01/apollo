@@ -364,8 +364,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     if (user == null) return;
 
     try {
-      // Get all groups where the user is a member
-      final res = await Supabase.instance.client
+      // Get all groups where the user is a member with optimized query
+      final groupMembersRes = await Supabase.instance.client
           .from('group_members')
           .select('''
             group_id,
@@ -385,40 +385,72 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           .eq('user_id', user.id)
           .order('joined_at', ascending: false);
 
+      if (groupMembersRes.isEmpty) {
+        setState(() {
+          _groups = [];
+          _loadingGroups = false;
+        });
+        return;
+      }
 
-      // Get last messages for each group
-      List<Map<String, dynamic>> groupsWithMessages = [];
-      for (final member in res) {
-        final group = member['groups'] as Map<String, dynamic>;
-        final groupId = group['id'];
-        
-        // Get the last message for this group
-        final lastMessageRes = await Supabase.instance.client
-            .from('messages')
-            .select('''
+      // Extract group IDs for batch queries
+      final groupIds = groupMembersRes
+          .map((member) => (member['groups'] as Map<String, dynamic>)['id'] as String)
+          .toList();
+
+      // Batch query: Get all last messages for all groups in a single query
+      final allMessagesRes = await Supabase.instance.client
+          .from('messages')
+          .select('''
+            id,
+            group_id,
+            content,
+            created_at,
+            sender_id,
+            type,
+            is_seen,
+            profiles!messages_sender_id_fkey(
               id,
-              content,
-              created_at,
-              sender_id,
-              type,
-              is_seen,
-              profiles!messages_sender_id_fkey(
-                id,
-                name,
-                username
-              )
-            ''')
-            .eq('group_id', groupId)
-            .order('created_at', ascending: false)
-            .limit(1);
-            
-        // Get unread messages count for this group
-        final unreadCountRes = await Supabase.instance.client
-            .from('messages')
-            .select('id')
-            .eq('group_id', groupId)
-            .neq('sender_id', user.id)  // Don't count own messages
-            .eq('is_seen', false);
+              name,
+              username
+            )
+          ''')
+          .in_('group_id', groupIds)
+          .order('created_at', ascending: false);
+
+      // Process messages to get last message and unread count for each group
+      final Map<String, Map<String, dynamic>> lastMessagesMap = {};
+      final Map<String, int> unreadCountsMap = {};
+
+      for (final message in allMessagesRes) {
+        final groupId = message['group_id'] as String;
+        
+        // Track unread count (messages from others that are not seen)
+        if (message['sender_id'] != user.id && !(message['is_seen'] ?? false)) {
+          unreadCountsMap[groupId] = (unreadCountsMap[groupId] ?? 0) + 1;
+        }
+        
+        // Keep only the most recent message for each group
+        if (!lastMessagesMap.containsKey(groupId)) {
+          final senderProfile = message['profiles'] as Map<String, dynamic>?;
+          final senderId = message['sender_id'];
+          final senderName = senderProfile?['name'] ?? senderProfile?['username'] ?? 'Unknown';
+          
+          lastMessagesMap[groupId] = {
+            'lastMessage': message['content'] ?? '',
+            'lastMessageTime': message['created_at'],
+            'lastMessageSenderId': senderId,
+            'lastMessageSenderName': senderName,
+            'lastMessageType': message['type'],
+          };
+        }
+      }
+
+      // Build final groups list with all data
+      List<Map<String, dynamic>> groupsWithMessages = [];
+      for (final member in groupMembersRes) {
+        final group = member['groups'] as Map<String, dynamic>;
+        final groupId = group['id'] as String;
         
         Map<String, dynamic> groupData = {
           'id': group['id'],
@@ -431,23 +463,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           'creator_id': group['creator_id'],
           'role': member['role'],
           'joined_at': member['joined_at'],
-          'unreadCount': unreadCountRes.length,
+          'unreadCount': unreadCountsMap[groupId] ?? 0,
         };
         
         // Add last message info if available
-        if (lastMessageRes.isNotEmpty) {
-          final lastMessage = lastMessageRes.first;
-          final senderProfile = lastMessage['profiles'] as Map<String, dynamic>?;
-          final senderId = lastMessage['sender_id'];
-          final senderName = senderProfile?['name'] ?? senderProfile?['username'] ?? 'Unknown';
-          
-          groupData.addAll({
-            'lastMessage': lastMessage['content'] ?? '',
-            'lastMessageTime': lastMessage['created_at'],
-            'lastMessageSenderId': senderId,
-            'lastMessageSenderName': senderName,
-            'lastMessageType': lastMessage['type'],
-          });
+        if (lastMessagesMap.containsKey(groupId)) {
+          groupData.addAll(lastMessagesMap[groupId]!);
         }
         
         groupsWithMessages.add(groupData);
@@ -473,6 +494,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       });
 
     } catch (e) {
+      print('Error fetching groups: $e');
       setState(() => _loadingGroups = false);
     }
   }
