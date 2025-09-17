@@ -1,9 +1,338 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'private_chat/private_chat.dart';
 
-class UserProfilePage extends StatelessWidget {
+class UserProfilePage extends StatefulWidget {
   final Map<String, dynamic> profile;
-  const UserProfilePage({required this.profile, super.key});
+  final bool fromPrivateChat; // Add flag to detect if coming from private chat
+  
+  const UserProfilePage({
+    required this.profile, 
+    this.fromPrivateChat = false,
+    super.key
+  });
+
+  @override
+  State<UserProfilePage> createState() => _UserProfilePageState();
+}
+
+class _UserProfilePageState extends State<UserProfilePage> {
+  bool _isContact = false;
+  bool _isBlocked = false;
+  bool _notificationsEnabled = true;
+  bool _isLoading = false; // Start with false to show buttons immediately
+  bool _statusLoaded = false; // Track if status has been loaded
+
+  @override
+  void initState() {
+    super.initState();
+    _checkUserStatus(); // This now runs in background
+  }
+
+  Future<void> _checkUserStatus() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      setState(() => _statusLoaded = true);
+      return;
+    }
+
+    try {
+      // Run both queries in parallel for faster loading
+      final results = await Future.wait([
+        // Check if user is in contacts
+        Supabase.instance.client
+            .from('contacts')
+            .select('notifications_enabled')
+            .eq('user_id', user.id)
+            .eq('contact_id', widget.profile['id'])
+            .maybeSingle(),
+        
+        // Check if user is blocked
+        Supabase.instance.client
+            .from('blocked_users')
+            .select('*')
+            .eq('blocker_id', user.id)
+            .eq('blocked_id', widget.profile['id'])
+            .maybeSingle(),
+      ]);
+      
+      final contactRes = results[0];
+      final blockedRes = results[1];
+      
+      // Update contact status
+      if (contactRes != null) {
+        _isContact = true;
+        _notificationsEnabled = contactRes['notifications_enabled'] ?? true;
+      }
+      
+      // Update blocked status
+      if (blockedRes != null) {
+        _isBlocked = true;
+      }
+      
+      if (mounted) {
+        setState(() => _statusLoaded = true);
+      }
+    } catch (e) {
+      print('Error checking user status: $e');
+      if (mounted) {
+        setState(() => _statusLoaded = true);
+      }
+    }
+  }
+
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        decoration: BoxDecoration(
+          color: Colors.grey[100],
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFF6D5BFF), width: 1),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              color: const Color(0xFF6D5BFF),
+              size: 24,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF6D5BFF),
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _onMessageTap() async {
+    // Check if user is authenticated before navigating
+    final user = Supabase.instance.client.auth.currentUser;
+    
+    // Ensure we pass the correct contact data structure that PrivateChat expects
+    final contactData = {
+      'id': widget.profile['id'],
+      'name': widget.profile['name'] ?? 'Unknown User',
+      'bio': widget.profile['bio'] ?? '',
+      'avatar_url': (widget.profile['avatar_url'] != null && widget.profile['avatar_url'].toString().isNotEmpty) 
+          ? widget.profile['avatar_url'] 
+          : null,
+      'last_seen': widget.profile['last_seen'],
+      'username': widget.profile['username'] ?? '',
+    };
+    
+    print('=== DEBUG: Opening chat ===');
+    print('Contact ID: ${contactData['id']}');
+    print('Contact Name: ${contactData['name']}');
+    print('Current User: ${user?.id ?? 'null'}');
+    print('Profile data: ${widget.profile}');
+    print('========================');
+    
+    if (user == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You need to be logged in to send messages'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+    
+    // Check if we have a valid contact ID
+    if (contactData['id'] == null || contactData['id'].toString().isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Invalid user profile - cannot open chat'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+    
+    try {
+      if (widget.fromPrivateChat) {
+        // If coming from private chat, replace the entire navigation stack
+        // This removes both the profile page and the previous chat page
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+            builder: (context) => PrivateChat(contact: contactData),
+          ),
+          (route) => route.settings.name == '/home' || route.isFirst,
+        );
+      } else {
+        // Normal navigation - just push the chat page
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => PrivateChat(contact: contactData),
+          ),
+        );
+      }
+    } catch (e) {
+      print('Error navigating to chat: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to open chat: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _onAddContact() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      await Supabase.instance.client.from('contacts').insert({
+        'user_id': user.id,
+        'contact_id': widget.profile['id'],
+        'nickname': widget.profile['name'],
+        'notifications_enabled': true,
+      });
+
+      setState(() {
+        _isContact = true;
+        _notificationsEnabled = true;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Contact added successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add contact: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _onToggleNotifications() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final newValue = !_notificationsEnabled;
+      await Supabase.instance.client
+          .from('contacts')
+          .update({'notifications_enabled': newValue})
+          .eq('user_id', user.id)
+          .eq('contact_id', widget.profile['id']);
+
+      setState(() {
+        _notificationsEnabled = newValue;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              newValue
+                  ? 'Notifications enabled'
+                  : 'Notifications disabled',
+            ),
+            backgroundColor: Colors.blue,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update notifications: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _onToggleBlock() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      if (_isBlocked) {
+        // Unblock user
+        await Supabase.instance.client
+            .from('blocked_users')
+            .delete()
+            .eq('blocker_id', user.id)
+            .eq('blocked_id', widget.profile['id']);
+
+        setState(() {
+          _isBlocked = false;
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('User unblocked'),
+              backgroundColor: Colors.blue,
+            ),
+          );
+        }
+      } else {
+        // Block user
+        await Supabase.instance.client.from('blocked_users').insert({
+          'blocker_id': user.id,
+          'blocked_id': widget.profile['id'],
+        });
+
+        setState(() {
+          _isBlocked = true;
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('User blocked'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to ${_isBlocked ? 'unblock' : 'block'} user: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
 
   String _formatLastSeen(dynamic lastSeen) {
     if (lastSeen == null) return 'Unknown';
@@ -23,13 +352,13 @@ class UserProfilePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avatarUrl = profile['avatar_url'] as String?;
-    final name = profile['name'] as String? ?? '';
-    final username = profile['username'] as String? ?? '';
-    final bio = profile['bio'] as String? ?? '';
-    final lastSeen = profile['last_seen'];
-    final birthday = profile['birthday'];
-    final bool isContact = profile['is_contact'] == true;
+    final avatarUrl = widget.profile['avatar_url'] as String?;
+    final name = widget.profile['name'] as String? ?? '';
+    final username = widget.profile['username'] as String? ?? '';
+    final bio = widget.profile['bio'] as String? ?? '';
+    final lastSeen = widget.profile['last_seen'];
+    final birthday = widget.profile['birthday'];
+    final bool isContact = widget.profile['is_contact'] == true;
     return Scaffold(
       body: Container(
         width: double.infinity,
@@ -148,6 +477,38 @@ class UserProfilePage extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 20),
+                          // Action buttons row - show immediately with default states
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              _buildActionButton(
+                                icon: Icons.message,
+                                label: 'Message',
+                                onTap: _onMessageTap,
+                              ),
+                              _isContact
+                                  ? _buildActionButton(
+                                      icon: _notificationsEnabled
+                                          ? Icons.notifications
+                                          : Icons.notifications_off,
+                                      label: _notificationsEnabled
+                                          ? 'Mute'
+                                          : 'Unmute',
+                                      onTap: _onToggleNotifications,
+                                    )
+                                  : _buildActionButton(
+                                      icon: Icons.person_add,
+                                      label: 'Add contact',
+                                      onTap: _onAddContact,
+                                    ),
+                              _buildActionButton(
+                                icon: _isBlocked ? Icons.person : Icons.block,
+                                label: _isBlocked ? 'Unblock' : 'Block',
+                                onTap: _onToggleBlock,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 20),
                           if (username.isNotEmpty)
                             Container(
                               width: double.infinity,
@@ -247,40 +608,52 @@ class UserProfilePage extends StatelessWidget {
                     ),
                     // Menu button at upper right corner of the card
                     Positioned(
-                      top: 8,
-                      right: 8,
-                      child: PopupMenuButton<String>(
-                        icon: const Icon(
-                          Icons.more_vert,
-                          color: Colors.black54,
-                        ),
-                        itemBuilder:
-                            (context) => [
+                        top: 8,
+                        right: 8,
+                        child: PopupMenuButton<String>(
+                          icon: const Icon(
+                            Icons.more_vert,
+                            color: Colors.black54,
+                          ),
+                          itemBuilder: (context) => [
+                            PopupMenuItem(
+                              value: 'block',
+                              child: Text(_isBlocked ? 'Unblock user' : 'Block user'),
+                            ),
+                            if (_isContact) ...[
                               const PopupMenuItem(
-                                value: 'block',
-                                child: Text('Block user'),
+                                value: 'delete',
+                                child: Text('Delete contact'),
                               ),
-                              if (isContact) ...[
-                                const PopupMenuItem(
-                                  value: 'delete',
-                                  child: Text('Delete contact'),
-                                ),
-                                const PopupMenuItem(
-                                  value: 'edit',
-                                  child: Text('Edit contact'),
-                                ),
-                              ] else ...[
-                                const PopupMenuItem(
-                                  value: 'add',
-                                  child: Text('Add to contact'),
-                                ),
-                              ],
+                              const PopupMenuItem(
+                                value: 'edit',
+                                child: Text('Edit contact'),
+                              ),
+                            ] else ...[
+                              const PopupMenuItem(
+                                value: 'add',
+                                child: Text('Add to contact'),
+                              ),
                             ],
-                        onSelected: (value) {
-                          // Handle menu actions here
-                        },
+                          ],
+                          onSelected: (value) {
+                            switch (value) {
+                              case 'block':
+                                _onToggleBlock();
+                                break;
+                              case 'add':
+                                _onAddContact();
+                                break;
+                              case 'delete':
+                                // Handle delete contact
+                                break;
+                              case 'edit':
+                                // Handle edit contact
+                                break;
+                            }
+                          },
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),

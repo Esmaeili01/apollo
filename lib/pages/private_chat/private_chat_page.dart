@@ -46,6 +46,7 @@ class _PrivateChatState extends State<PrivateChat> {
         _subscribeToMessages();
         _subscribeToContactStatus();
         _loadNotificationSetting();
+        _checkIfContactIsBlocked(); // Check if contact is blocked
       }
     });
     // Add scroll listener to mark messages as seen when scrolled into view
@@ -59,10 +60,42 @@ class _PrivateChatState extends State<PrivateChat> {
     }
   }
 
-  bool get _isBlockedContact {
-    final id = widget.contact['id'];
-    return id == "0fd7896a-3c6d-45e9-b7b8-2239120426c5" ||
-          id == "88ad8967-0fad-4b68-b012-708a2701a461";
+  bool _isContactBlocked = false; // Current user blocked the contact
+  bool _isBlockedByContact = false; // Current user is blocked by the contact
+  
+  Future<void> _checkIfContactIsBlocked() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+    
+    try {
+      // Run both queries in parallel
+      final results = await Future.wait([
+        // Check if current user blocked the contact
+        Supabase.instance.client
+            .from('blocked_users')
+            .select('*')
+            .eq('blocker_id', user.id)
+            .eq('blocked_id', widget.contact['id'])
+            .maybeSingle(),
+        
+        // Check if current user is blocked by the contact
+        Supabase.instance.client
+            .from('blocked_users')
+            .select('*')
+            .eq('blocker_id', widget.contact['id'])
+            .eq('blocked_id', user.id)
+            .maybeSingle(),
+      ]);
+      
+      if (mounted) {
+        setState(() {
+          _isContactBlocked = results[0] != null; // I blocked them
+          _isBlockedByContact = results[1] != null; // They blocked me
+        });
+      }
+    } catch (e) {
+      print('Error checking blocking status: $e');
+    }
   }
   @override
   void dispose() {
@@ -214,13 +247,28 @@ class _PrivateChatState extends State<PrivateChat> {
   }
 
   Future<void> _sendMessage() async {
-  // Check if contact is blocked
-  if (_isBlockedContact) {
+  // Check if contact is blocked by current user
+  if (_isContactBlocked) {
+    final contactName = _contactProfile?['name'] ?? widget.contact['name'] ?? 'this user';
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('You cannot send messages to a blocked contact.'),
+          content: Text('You have blocked $contactName. Unblock to send messages.'),
           backgroundColor: Colors.orange,
+        ),
+      );
+    }
+    return; // Exit early
+  }
+  
+  // Check if current user is blocked by the contact
+  if (_isBlockedByContact) {
+    final contactName = _contactProfile?['name'] ?? widget.contact['name'] ?? 'this user';
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('You have been blocked by $contactName.'),
+          backgroundColor: Colors.red,
         ),
       );
     }
@@ -531,7 +579,10 @@ class _PrivateChatState extends State<PrivateChat> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => UserProfilePage(profile: _contactProfile!),
+        builder: (_) => UserProfilePage(
+          profile: _contactProfile!,
+          fromPrivateChat: true, // Flag to indicate coming from private chat
+        ),
       ),
     );
   }
@@ -683,22 +734,29 @@ class _PrivateChatState extends State<PrivateChat> {
                 child: Row(
                   children: [
                     IconButton(
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.attach_file,
-                        color: Color(0xFF6D5BFF),
+                        color: (_isContactBlocked || _isBlockedByContact) 
+                            ? Colors.grey[400] 
+                            : const Color(0xFF6D5BFF),
                       ),
-                      onPressed: _sending ? null : _handleAttachFile,
+                      onPressed: (_sending || _isContactBlocked || _isBlockedByContact) 
+                          ? null 
+                          : _handleAttachFile,
                     ),
-                  _isBlockedContact
+                  (_isContactBlocked || _isBlockedByContact)
                     ? Expanded(
                         child: Container(
                           alignment: Alignment.centerLeft,
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                           child: Text(
-                            'You cannot send messages to this contact.',
+                            _isBlockedByContact 
+                                ? 'You have been blocked by ${_contactProfile?['name'] ?? widget.contact['name'] ?? 'this user'}.'
+                                : 'You have blocked ${_contactProfile?['name'] ?? widget.contact['name'] ?? 'this user'}. Unblock to send messages.',
                             style: TextStyle(
-                              color: Colors.grey[600],
+                              color: _isBlockedByContact ? Colors.red[600] : Colors.orange[600],
                               fontStyle: FontStyle.italic,
+                              fontSize: 14,
                             ),
                           ),
                         ),
@@ -718,12 +776,16 @@ class _PrivateChatState extends State<PrivateChat> {
                     IconButton(
                       icon: Icon(
                         Icons.mic,
-                        color: kIsWeb ? const Color(0xFF6D5BFF) : Colors.grey,
+                        color: (_isContactBlocked || _isBlockedByContact || !kIsWeb) 
+                            ? Colors.grey[400] 
+                            : const Color(0xFF6D5BFF),
                       ),
-                      onPressed: _sending || !kIsWeb
+                      onPressed: (_sending || !kIsWeb || _isContactBlocked || _isBlockedByContact)
                           ? null
                           : _handleRecordVoice,
-                      tooltip: kIsWeb
+                      tooltip: (_isContactBlocked || _isBlockedByContact)
+                          ? 'Cannot send messages'
+                          : kIsWeb
                           ? 'Record voice'
                           : 'Voice recording web-only',
                     ),
@@ -736,8 +798,15 @@ class _PrivateChatState extends State<PrivateChat> {
                                 strokeWidth: 2.5,
                               ),
                             )
-                          : const Icon(Icons.send, color: Color(0xFF6D5BFF)),
-                      onPressed: _sending ? null : _sendMessage,
+                          : Icon(
+                              Icons.send, 
+                              color: (_isContactBlocked || _isBlockedByContact)
+                                  ? Colors.grey[400]
+                                  : const Color(0xFF6D5BFF),
+                            ),
+                      onPressed: (_sending || _isContactBlocked || _isBlockedByContact) 
+                          ? null 
+                          : _sendMessage,
                     ),
                   ],
                 ),
