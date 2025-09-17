@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'group_manage.dart';
-import 'user_profile.dart';
+import '../user_profile.dart';
 
 class GroupProfilePage extends StatefulWidget {
   final Map<String, dynamic> group;
