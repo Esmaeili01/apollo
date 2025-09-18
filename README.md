@@ -8,7 +8,37 @@ A modern, cross-platform messaging application built with Flutter and powered by
 
 ## 📱 About
 
-Apollo is a comprehensive messaging application that provides seamless communication across all major platforms. Built with Flutter's cross-platform capabilities, it offers a native experience on Android, iOS, Web, Windows, Linux, and macOS.
+Apollo is a comprehensive messaging application developed as a collaborative university project. This cross-platform app provides seamless communication across all major platforms, built with Flutter's capabilities to offer a native experience on Android, iOS, Web, Windows, Linux, and macOS.
+
+> **Academic Project**: This application was developed as part of a Term 6 Flutter course, showcasing modern mobile development practices and real-time communication features.
+
+## 🎯 Project Milestones
+
+### Phase 1: Foundation ✅
+- [x] Project setup and Flutter environment
+- [x] Supabase backend configuration
+- [x] Basic authentication system
+- [x] Initial UI/UX design
+
+### Phase 2: Core Features 🚧
+- [x] Private messaging functionality
+- [x] Real-time message delivery
+- [x] User profile management
+- [ ] Group chat implementation
+- [ ] File sharing capabilities
+
+### Phase 3: Advanced Features 🔄
+- [ ] Voice message recording/playback
+- [ ] Push notifications
+- [ ] Online status tracking
+- [ ] Message editing and replies
+
+### Phase 4: Polish & Testing ⏳
+- [ ] Cross-platform optimization
+- [ ] UI/UX refinements
+- [ ] Comprehensive testing
+- [ ] Performance optimization
+- [ ] Final documentation
 
 ## ✨ Features
 
@@ -58,10 +88,11 @@ Apollo is a comprehensive messaging application that provides seamless communica
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/Esmaeili01/apollo.git
+   git clone https://github.com/yourusername/apollo.git
    cd apollo
    ```
-   or
+   
+   > **Note**: This is a collaborative university project. Make sure to coordinate with your teammate before making significant changes.
    ```bash
    git clone https://github.com/sobhan051/apollo.git
    ```
@@ -77,11 +108,14 @@ Apollo is a comprehensive messaging application that provides seamless communica
 
 3. **Configure Supabase**
    - Create a Supabase project at [supabase.com](https://supabase.com)
+   - Share Supabase credentials with your development partner
    - Update the Supabase credentials in `lib/main.dart`:
      ```dart
      const supabaseUrl = 'YOUR_SUPABASE_URL';
      const supabaseAnonKey = 'YOUR_SUPABASE_ANON_KEY';
      ```
+   
+   > **Important**: Keep your Supabase credentials secure and only share them through secure channels with your teammate.
 
 4. **Run the application**
    ```bash
@@ -202,21 +236,49 @@ flutter build linux            # Linux
 - `flutter_test` - Testing framework
 - `flutter_lints` - Code analysis
 
+## 👥 Development Team
+
+This project is a collaborative effort between two developers:
+- **Developer 1**: [Your Name] - Core messaging features, UI/UX design
+- **Developer 2**: [Friend's Name] - Backend integration, authentication system
+
+### Collaborative Workflow
+
+#### Branch Strategy
+- `main` - Production-ready code
+- `dev` - Development integration branch
+- `feature/[developer-name]-[feature]` - Individual feature branches
+
+#### Development Process
+1. **Daily Coordination**: Regular communication about current work
+2. **Feature Assignment**: Clear division of responsibilities
+3. **Code Reviews**: Peer review before merging to main
+4. **Testing**: Both developers test each other's features
+5. **Documentation**: Update docs collaboratively
+
+#### Shared Resources
+- **Supabase Database**: Shared backend instance
+- **Design Assets**: Collaborative design decisions
+- **Project Documentation**: Maintained in `PROJECT_STRUCTURE.md`
+- **Persian Documentation**: Available in `documentation_farsi.md`
+
 ## 🤝 Contributing
 
-We welcome contributions! Please follow these steps:
+This is currently a private collaborative project. If you're interested in contributing:
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+1. Contact the development team
+2. Fork the repository (if made public)
+3. Create a feature branch (`git checkout -b feature/amazing-feature`)
+4. Commit your changes (`git commit -m 'Add amazing feature'`)
+5. Push to the branch (`git push origin feature/amazing-feature`)
+6. Open a Pull Request
 
 ### Code Style
 - Follow Dart/Flutter style guidelines
 - Use meaningful variable names
 - Add comments for complex logic
 - Ensure all tests pass
+- Coordinate with team members before major changes
 
 ## 📄 License
 
@@ -235,12 +297,20 @@ If you encounter any issues or have questions:
 - Flutter team for the amazing framework
 - Supabase team for the powerful backend
 - Open source community for the packages used
+- University Term 6 Flutter course for project guidance
 
 ## 📞 Contact
 
-- **Developer**: Your Name
-- **Email**: your.email@example.com
-- **Project Link**: [https://github.com/Esmaeili01/apollo](https://github.com/Esmaeili01/apollo)
+### Development Team
+- **Primary Developer**: [Your Name]
+  - Email: your.email@example.com
+  - Role: Core messaging features, UI/UX design
+
+- **Co-Developer**: [Friend's Name]
+  - Email: friend.email@example.com
+  - Role: Backend integration, authentication system
+
+- **Project Repository**: [https://github.com/yourusername/apollo](https://github.com/yourusername/apollo)
 
 ---
 
