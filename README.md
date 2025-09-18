@@ -24,21 +24,21 @@ Apollo is a comprehensive messaging application developed as a collaborative uni
 - [x] Private messaging functionality
 - [x] Real-time message delivery
 - [x] User profile management
-- [ ] Group chat implementation
-- [ ] File sharing capabilities
+- [x] Group chat implementation
+- [x] File sharing capabilities
 
 ### Phase 3: Advanced Features 🔄
-- [ ] Voice message recording/playback
-- [ ] Push notifications
-- [ ] Online status tracking
-- [ ] Message editing and replies
+- [x] Voice message recording/playback
+- [x] Push notifications
+- [x] Online status tracking
+- [x] Message editing and replies
 
 ### Phase 4: Polish & Testing ⏳
-- [ ] Cross-platform optimization
-- [ ] UI/UX refinements
-- [ ] Comprehensive testing
-- [ ] Performance optimization
-- [ ] Final documentation
+- [x] Cross-platform optimization
+- [x] UI/UX refinements
+- [x] Comprehensive testing
+- [x] Performance optimization
+- [x] Final documentation
 
 ## ✨ Features
 
