@@ -133,7 +133,9 @@ Set up your Supabase database with the following tables:
 - `profiles` - User profile information
 - `messages` - Chat messages
 - `contacts` - User contacts and relationships
+- `blocked_users` - blocked users and their blockers
 - `groups` - Group chat information
+- `group_members` - group membership 
 
 ## 📁 Project Structure
 
