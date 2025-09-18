@@ -89,10 +89,8 @@ Apollo is a comprehensive messaging application developed as a collaborative uni
 1. **Clone the repository**
    ```bash
    git clone https://github.com/yourusername/apollo.git
-   cd apollo
    ```
-   
-   > **Note**: This is a collaborative university project. Make sure to coordinate with your teammate before making significant changes.
+   or
    ```bash
    git clone https://github.com/sobhan051/apollo.git
    ```
