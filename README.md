@@ -58,7 +58,15 @@ Apollo is a comprehensive messaging application that provides seamless communica
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/apollo.git
+   git clone https://github.com/Esmaeili01/apollo.git
+   cd apollo
+   ```
+   or
+   ```bash
+   git clone https://github.com/sobhan051/apollo.git
+   ```
+   then 
+   ```bash
    cd apollo
    ```
 
@@ -218,7 +226,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 If you encounter any issues or have questions:
 
-1. Check the [Issues](https://github.com/yourusername/apollo/issues) page
+1. Check the [Issues](https://github.com/Esmaeili01/apollo/issues) page
 2. Create a new issue with detailed information
 3. Join our community discussions
 
@@ -232,7 +240,7 @@ If you encounter any issues or have questions:
 
 - **Developer**: Your Name
 - **Email**: your.email@example.com
-- **Project Link**: [https://github.com/yourusername/apollo](https://github.com/yourusername/apollo)
+- **Project Link**: [https://github.com/Esmaeili01/apollo](https://github.com/Esmaeili01/apollo)
 
 ---
 
