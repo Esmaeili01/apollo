@@ -88,7 +88,7 @@ Apollo is a comprehensive messaging application developed as a collaborative uni
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/apollo.git
+   git clone https://github.com/Esmaeili01/apollo.git
    ```
    or
    ```bash
@@ -237,8 +237,8 @@ flutter build linux            # Linux
 ## 👥 Development Team
 
 This project is a collaborative effort between two developers:
-- **Developer 1**: [Your Name] - Core messaging features, UI/UX design
-- **Developer 2**: [Friend's Name] - Backend integration, authentication system
+- Amin Esmaeili
+- Sobhan Askari
 
 ### Collaborative Workflow
 
@@ -257,7 +257,6 @@ This project is a collaborative effort between two developers:
 #### Shared Resources
 - **Supabase Database**: Shared backend instance
 - **Design Assets**: Collaborative design decisions
-- **Project Documentation**: Maintained in `PROJECT_STRUCTURE.md`
 - **Persian Documentation**: Available in `documentation_farsi.md`
 
 ## 🤝 Contributing
@@ -300,15 +299,15 @@ If you encounter any issues or have questions:
 ## 📞 Contact
 
 ### Development Team
-- **Primary Developer**: [Your Name]
+- **Co-Developer**: Amin Esmaeili
   - Email: your.email@example.com
-  - Role: Core messaging features, UI/UX design
 
-- **Co-Developer**: [Friend's Name]
+- **Co-Developer**: Sobhan Askari
   - Email: friend.email@example.com
-  - Role: Backend integration, authentication system
 
-- **Project Repository**: [https://github.com/yourusername/apollo](https://github.com/yourusername/apollo)
+- **Project Repository**: 
+  -[https://github.com/Esmaeili01/apollo](https://github.com/Esmaeili01/apollo)
+  -[https://github.com/sobhan051/apollo](https://github.com/sobhan051/apollo)
 
 ---
 
