@@ -1,4 +1,4 @@
-# Apollo 🚀
+# Apollo Messenger🚀
 
 A modern, cross-platform messaging application built with Flutter and powered by Supabase.
 
