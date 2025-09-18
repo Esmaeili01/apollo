@@ -10,7 +10,7 @@ A modern, cross-platform messaging application built with Flutter and powered by
 
 Apollo is a comprehensive messaging application developed as a collaborative university project. This cross-platform app provides seamless communication across all major platforms, built with Flutter's capabilities to offer a native experience on Android, iOS, Web, Windows, Linux, and macOS.
 
-> **Academic Project**: This application was developed as part of a Term 6 Flutter course, showcasing modern mobile development practices and real-time communication features.
+> **Academic Project**: This application was developed as part of a 6th semester Flutter course, showcasing modern mobile development practices and real-time communication features.
 
 ## 🎯 Project Milestones
 
