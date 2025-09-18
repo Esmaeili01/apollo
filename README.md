@@ -306,8 +306,8 @@ If you encounter any issues or have questions:
   - Email: friend.email@example.com
 
 - **Project Repository**: 
-  -[https://github.com/Esmaeili01/apollo](https://github.com/Esmaeili01/apollo)
-  -[https://github.com/sobhan051/apollo](https://github.com/sobhan051/apollo)
+  - [https://github.com/Esmaeili01/apollo](https://github.com/Esmaeili01/apollo)
+  - [https://github.com/sobhan051/apollo](https://github.com/sobhan051/apollo)
 
 ---
 
