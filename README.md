@@ -294,7 +294,7 @@ If you encounter any issues or have questions:
 - Flutter team for the amazing framework
 - Supabase team for the powerful backend
 - Open source community for the packages used
-- University Term 6 Flutter course for project guidance
+- University 6th semester Flutter course for project guidance
 
 ## 📞 Contact
 
