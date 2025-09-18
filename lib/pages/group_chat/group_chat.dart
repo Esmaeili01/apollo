@@ -33,6 +33,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
   bool _sending = false;
   RealtimeChannel? _messagesSub;
   RealtimeChannel? _groupSub;
+  RealtimeChannel? _membersSub;
   // RealtimeChannel? _profilesSub;
   Map<String, dynamic>? _editingMessage;
   Map<String, dynamic>? _replyToMessage;
@@ -45,6 +46,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
         currentOpenGroupChatId = _groupId;
         _subscribeToMessages();  // Move subscription here after group ID is set
         _subscribeToGroupUpdates();  // Subscribe to group updates
+        _subscribeToMemberUpdates();  // Subscribe to member role changes
         // _subscribeToProfiles();
       }
     });
@@ -82,6 +84,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
     _scrollController.dispose();
     _messagesSub?.unsubscribe();
     _groupSub?.unsubscribe();
+    _membersSub?.unsubscribe();
     // _profilesSub?.unsubscribe();
     super.dispose();
   }
@@ -362,14 +365,18 @@ class _GroupChatPageState extends State<GroupChatPage> {
   // Check if current user can send messages (only applies to role 0 - members)
   bool get _canSendMessage {
     final role = _currentUserRole;
-    if (role == null || role >= 1) return true; // Admins and owners can always send messages
+    // Admins and owners can always send messages
+    if (role != null && role >= 1) return true;
+    // Treat unknown role conservatively as a regular member
     return _groupInfo['can_send_message'] ?? true;
   }
 
   // Check if current user can send media (only applies to role 0 - members)
   bool get _canSendMedia {
     final role = _currentUserRole;
-    if (role == null || role >= 1) return true; // Admins and owners can always send media
+    // Admins and owners can always send media
+    if (role != null && role >= 1) return true;
+    // Treat unknown role conservatively as a regular member
     return _groupInfo['can_send_media'] ?? true;
   }
 
@@ -832,6 +839,115 @@ void _subscribeToGroupUpdates() {
       },
     );
   _groupSub?.subscribe();
+}
+
+void _subscribeToMemberUpdates() {
+  if (_groupId == null) return;
+
+  final channelName = 'group-members-$_groupId';
+  _membersSub = Supabase.instance.client.channel(channelName)
+    ..on(
+      RealtimeListenTypes.postgresChanges,
+      ChannelFilter(event: 'INSERT', schema: 'public', table: 'group_members'),
+      (payload, [ref]) async {
+        final newMember = payload['new'] as Map<String, dynamic>;
+        if (newMember['group_id'] == _groupId && mounted) {
+          try {
+            final response = await Supabase.instance.client
+                .from('group_members')
+                .select('''
+                  user_id,
+                  role,
+                  joined_at,
+                  profiles!inner(
+                    id,
+                    name,
+                    username,
+                    avatar_url,
+                    bio
+                  )
+                ''')
+                .eq('group_id', _groupId)
+                .eq('user_id', newMember['user_id'])
+                .maybeSingle();
+            if (response != null && mounted) {
+              setState(() {
+                final profile = response['profiles'] as Map<String, dynamic>;
+                final role = response['role'] as int? ?? 0;
+                String roleText = '';
+                switch (role) {
+                  case 1:
+                    roleText = 'Admin';
+                    break;
+                  case 2:
+                    roleText = 'Owner';
+                    break;
+                  default:
+                    roleText = 'Member';
+                }
+                final mapped = {
+                  'user_id': response['user_id'],
+                  'role': role,
+                  'role_text': roleText,
+                  'joined_at': response['joined_at'],
+                  'name': profile['name'] ?? profile['username'] ?? 'Unknown',
+                  'username': profile['username'],
+                  'avatar_url': profile['avatar_url'],
+                  'bio': profile['bio'],
+                };
+                if (!_members.any((m) => m['user_id'] == mapped['user_id'])) {
+                  _members.add(mapped);
+                }
+              });
+            }
+          } catch (_) {}
+        }
+      },
+    )
+    ..on(
+      RealtimeListenTypes.postgresChanges,
+      ChannelFilter(event: 'UPDATE', schema: 'public', table: 'group_members'),
+      (payload, [ref]) {
+        final updated = payload['new'] as Map<String, dynamic>;
+        if (updated['group_id'] == _groupId && mounted) {
+          setState(() {
+            final idx = _members.indexWhere((m) => m['user_id'] == updated['user_id']);
+            if (idx != -1) {
+              final role = updated['role'] as int? ?? _members[idx]['role'] as int? ?? 0;
+              String roleText = '';
+              switch (role) {
+                case 1:
+                  roleText = 'Admin';
+                  break;
+                case 2:
+                  roleText = 'Owner';
+                  break;
+                default:
+                  roleText = 'Member';
+              }
+              _members[idx] = {
+                ..._members[idx],
+                'role': role,
+                'role_text': roleText,
+              };
+            }
+          });
+        }
+      },
+    )
+    ..on(
+      RealtimeListenTypes.postgresChanges,
+      ChannelFilter(event: 'DELETE', schema: 'public', table: 'group_members'),
+      (payload, [ref]) {
+        final old = payload['old'] as Map<String, dynamic>;
+        if (old['group_id'] == _groupId && mounted) {
+          setState(() {
+            _members.removeWhere((m) => m['user_id'] == old['user_id']);
+          });
+        }
+      },
+    );
+  _membersSub?.subscribe();
 }
 
   // void _subscribeToProfiles() {
@@ -1566,8 +1682,20 @@ class _GroupMessageBubble extends StatelessWidget {
       2 => 'Owner',
       _ => null,
     };
-    // Sender name and role removed - clean message display
-    final nameRow = const SizedBox.shrink();
+    // Show sender name above incoming messages
+    final nameRow = !isMe
+        ? Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              senderName,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF6D5BFF),
+              ),
+            ),
+          )
+        : const SizedBox.shrink();
     return GestureDetector(
       onLongPress: () => onShowOptions?.call(message, isMe),
       child: Align(
@@ -1637,7 +1765,7 @@ class _GroupMessageBubble extends StatelessWidget {
                   : CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // nameRow removed - no sender name display
+                nameRow,
                 if (message['reply_to_id'] != null && getMessageById != null)
                   _ReplyBubblePreview(
                     repliedMessage: getMessageById!(message['reply_to_id']),
