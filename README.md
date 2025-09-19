@@ -236,12 +236,6 @@ flutter build linux            # Linux
 - `flutter_test` - Testing framework
 - `flutter_lints` - Code analysis
 
-## 👥 Development Team
-
-This project is a collaborative effort between two developers:
-- Amin Esmaeili
-- Sobhan Askari
-
 ### Collaborative Workflow
 
 #### Branch Strategy
@@ -298,20 +292,6 @@ If you encounter any issues or have questions:
 - Open source community for the packages used
 - University 6th semester Flutter course for project guidance
 
-## 📞 Contact
-
-### Development Team
-- **Co-Developer**: Amin Esmaeili
-  - Email: amin.esmaeili.hsu@gmail.com
-
-- **Co-Developer**: Sobhan Askari
-  - Email: sobhanhsu@gmail.com
-
-- **Project Repository**: 
-  - [https://github.com/Esmaeili01/apollo](https://github.com/Esmaeili01/apollo)
-  - [https://github.com/sobhan051/apollo](https://github.com/sobhan051/apollo)
-
----
 
 <div align="center">
   <strong>Built with ❤️ using Flutter</strong>
